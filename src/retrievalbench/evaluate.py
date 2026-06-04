@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from .core import BenchmarkRun, Domain
+from .core import BenchmarkRun
 
 
 def recall_at_k(retrieved_ids: list[str], relevant_ids: set[str], k: int) -> float:
@@ -46,12 +46,7 @@ def mean_reciprocal_rank(retrieved_ids: list[str], relevant_ids: set[str]) -> fl
 def average_precision(
     retrieved_ids: list[str], relevant_ids: set[str]
 ) -> float:
-    """Average Precision (AP) for a single query.
-
-    AP is the mean of precision@k values computed at each rank position
-    where a relevant document is found.  Returns 0.0 if there are no
-    relevant documents.
-    """
+    """Average Precision (AP) for a single query."""
     if not relevant_ids:
         return 0.0
     hits = 0
@@ -78,18 +73,45 @@ def mean_average_precision(
 
 
 def r_precision(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
-    """R-Precision: precision at rank R, where R = |relevant_ids|.
-
-    R-Precision evaluates the top-R retrieved documents, where R is the
-    total number of known-relevant documents for the query.  If R is 0
-    the metric is undefined and 0.0 is returned.
-    """
+    """R-Precision: precision at rank R, where R = |relevant_ids|."""
     r = len(relevant_ids)
     if r == 0:
         return 0.0
     top_r = retrieved_ids[:r]
     hits = sum(1 for doc_id in top_r if doc_id in relevant_ids)
     return hits / r
+
+
+def latency_adjusted_ndcg(
+    retrieved_ids: list[str],
+    relevant_ids: set[str],
+    latency_ms: float,
+    k: int = 10,
+    latency_budget_ms: float = 500.0,
+) -> float:
+    """NDCG@k penalised by retrieval latency relative to a budget.
+
+    score = ndcg * exp(-max(0, latency - budget) / budget)
+    """
+    base = ndcg_at_k(retrieved_ids, relevant_ids, k)
+    overage = max(0.0, latency_ms - latency_budget_ms)
+    penalty = math.exp(-overage / max(latency_budget_ms, 1e-9))
+    return base * penalty
+
+
+def query_difficulty_tier(relevant_ids: set[str], corpus_size: int) -> str:
+    """Classify query difficulty by relevance density.
+
+    Tiers: 'easy' (>=5 % relevant), 'medium' (1-5 %), 'hard' (<1 %).
+    """
+    if corpus_size <= 0:
+        return "hard"
+    density = len(relevant_ids) / corpus_size
+    if density >= 0.05:
+        return "easy"
+    if density >= 0.01:
+        return "medium"
+    return "hard"
 
 
 def evaluate_run(
@@ -127,11 +149,7 @@ def compare_domains(
     qrels: dict[str, set[str]],
     k: int = 10,
 ) -> dict[str, dict[str, float]]:
-    """Compare metric averages across domains.
-
-    Returns a dict mapping domain name to aggregate metric dict (mean over
-    all runs in that domain).
-    """
+    """Compare metric averages across domains."""
     from collections import defaultdict
 
     domain_metrics: dict[str, list[dict]] = defaultdict(list)
