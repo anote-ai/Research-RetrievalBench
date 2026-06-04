@@ -13,12 +13,10 @@ from retrievalbench.core import (
     RetrievalBench,
 )
 from retrievalbench.data import make_corpus, make_queries, make_retrieval_result
-from retrievalbench.evaluate import ablation_table, evaluate_run
+from retrievalbench.evaluate import ablation_table
 
 try:
     from rich.console import Console
-    from rich.table import Table
-
     console = Console()
 except ImportError:
     console = None  # type: ignore
@@ -42,7 +40,6 @@ def main() -> None:
     bench = RetrievalBench()
     for cfg in configs:
         run = BenchmarkRun(config=cfg, domain=Domain.FINANCE)
-        # Simulate better recall for more advanced configs
         recall_boost = 0.1 * (cfg.use_reranking + cfg.use_metadata + cfg.use_query_expansion)
         for q in queries:
             rel = qrels.get(q["query_id"], set())

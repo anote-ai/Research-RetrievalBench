@@ -1,8 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
-import math, random, uuid
+import uuid
 
 
 class Domain(str, Enum):
@@ -64,8 +63,6 @@ class BenchmarkRun:
 
 
 class RetrievalBench:
-    """Aggregates multiple BenchmarkRuns and provides analysis utilities."""
-
     def __init__(self) -> None:
         self.runs: list[BenchmarkRun] = []
 
