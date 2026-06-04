@@ -43,9 +43,7 @@ def mean_reciprocal_rank(retrieved_ids: list[str], relevant_ids: set[str]) -> fl
     return 0.0
 
 
-def average_precision(
-    retrieved_ids: list[str], relevant_ids: set[str]
-) -> float:
+def average_precision(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
     """Average Precision (AP) for a single query."""
     if not relevant_ids:
         return 0.0
@@ -60,16 +58,11 @@ def average_precision(
     return precision_sum / len(relevant_ids)
 
 
-def mean_average_precision(
-    results: list[tuple[list[str], set[str]]]
-) -> float:
+def mean_average_precision(results: list[tuple[list[str], set[str]]]) -> float:
     """Mean Average Precision (MAP) over a list of (retrieved, relevant) pairs."""
     if not results:
         return 0.0
-    return sum(
-        average_precision(retrieved, relevant)
-        for retrieved, relevant in results
-    ) / len(results)
+    return sum(average_precision(r, rel) for r, rel in results) / len(results)
 
 
 def r_precision(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
@@ -82,9 +75,42 @@ def r_precision(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
     return hits / r
 
 
-def evaluate_run(
-    run: BenchmarkRun, qrels: dict[str, set[str]], k: int = 10
-) -> dict:
+def latency_adjusted_ndcg(
+    retrieved_ids: list[str],
+    relevant_ids: set[str],
+    latency_ms: float,
+    k: int = 10,
+    latency_budget_ms: float = 500.0,
+) -> float:
+    """NDCG@k penalised by retrieval latency relative to a budget.
+
+    score = ndcg * exp(-max(0, latency - budget) / budget)
+
+    Retrieval within budget receives no penalty; latency twice the budget
+    roughly halves the score.
+    """
+    base = ndcg_at_k(retrieved_ids, relevant_ids, k)
+    overage = max(0.0, latency_ms - latency_budget_ms)
+    penalty = math.exp(-overage / max(latency_budget_ms, 1e-9))
+    return base * penalty
+
+
+def query_difficulty_tier(relevant_ids: set[str], corpus_size: int) -> str:
+    """Classify query difficulty by relevance density.
+
+    Tiers: 'easy' (>=5 % relevant), 'medium' (1-5 %), 'hard' (<1 %).
+    """
+    if corpus_size <= 0:
+        return "hard"
+    density = len(relevant_ids) / corpus_size
+    if density >= 0.05:
+        return "easy"
+    if density >= 0.01:
+        return "medium"
+    return "hard"
+
+
+def evaluate_run(run: BenchmarkRun, qrels: dict[str, set[str]], k: int = 10) -> dict:
     """Compute aggregate metrics for a benchmark run."""
     recalls, precisions, ndcgs, mrrs, aps, r_precs = [], [], [], [], [], []
     for result in run.results:
@@ -135,9 +161,7 @@ def compare_domains(
     return result
 
 
-def ablation_table(
-    runs: list[BenchmarkRun], qrels: dict[str, set[str]], k: int = 10
-):
+def ablation_table(runs: list[BenchmarkRun], qrels: dict[str, set[str]], k: int = 10):
     """Return a pandas DataFrame with one row per run, sorted by ndcg@k desc."""
     import pandas as pd
 
