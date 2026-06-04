@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from .core import RetrievalResult, BenchmarkRun, Domain
+from .core import BenchmarkRun
 
 
 def recall_at_k(retrieved_ids: list[str], relevant_ids: set[str], k: int) -> float:
@@ -30,7 +30,6 @@ def ndcg_at_k(retrieved_ids: list[str], relevant_ids: set[str], k: int) -> float
         )
 
     actual_dcg = dcg(retrieved_ids)
-    # Ideal ranking: relevant docs first
     ideal_ids = list(relevant_ids) + [x for x in retrieved_ids if x not in relevant_ids]
     ideal_dcg = dcg(ideal_ids)
     return actual_dcg / ideal_dcg if ideal_dcg > 0 else 0.0
@@ -47,16 +46,7 @@ def mean_reciprocal_rank(retrieved_ids: list[str], relevant_ids: set[str]) -> fl
 def evaluate_run(
     run: BenchmarkRun, qrels: dict[str, set[str]], k: int = 10
 ) -> dict:
-    """Compute aggregate metrics for a benchmark run.
-
-    Args:
-        run: BenchmarkRun with retrieval results.
-        qrels: Mapping query_id -> set of relevant doc ids.
-        k: Cutoff for rank-based metrics.
-
-    Returns:
-        Dict with recall@k, precision@k, ndcg@k, mrr, n_queries.
-    """
+    """Compute aggregate metrics for a benchmark run."""
     recalls, precisions, ndcgs, mrrs = [], [], [], []
     for result in run.results:
         rel = qrels.get(result.query_id, set())

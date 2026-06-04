@@ -1,5 +1,4 @@
 from __future__ import annotations
-import pytest
 from retrievalbench.data import make_corpus, make_queries, make_retrieval_result
 from retrievalbench.core import RetrievalResult
 

@@ -3,7 +3,6 @@ import pytest
 from retrievalbench.core import (
     Domain,
     RAGConfig,
-    CHUNKING_STRATEGIES,
     RetrievalResult,
     BenchmarkRun,
     RetrievalBench,
