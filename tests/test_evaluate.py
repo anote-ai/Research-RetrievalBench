@@ -3,6 +3,7 @@ import pytest
 from retrievalbench.evaluate import (
     recall_at_k,
     precision_at_k,
+    f1_at_k,
     ndcg_at_k,
     mean_reciprocal_rank,
     average_precision,
@@ -36,6 +37,31 @@ def test_precision_at_k_basic() -> None:
 
 def test_precision_at_k_zero_k() -> None:
     assert precision_at_k(["a"], {"a"}, 0) == pytest.approx(0.0)
+
+
+def test_f1_at_k_perfect() -> None:
+    rel = {"a", "b"}
+    assert f1_at_k(["a", "b", "c"], rel, 2) == pytest.approx(1.0)
+
+
+def test_f1_at_k_zero() -> None:
+    assert f1_at_k(["x", "y"], {"a"}, 2) == pytest.approx(0.0)
+
+
+def test_f1_at_k_no_relevant() -> None:
+    assert f1_at_k(["a", "b"], set(), 2) == pytest.approx(0.0)
+
+
+def test_f1_at_k_zero_k() -> None:
+    assert f1_at_k(["a"], {"a"}, 0) == pytest.approx(0.0)
+
+
+def test_f1_at_k_partial() -> None:
+    rel = {"a", "b", "c"}
+    # top-2: ["a", "x"] → precision@2=0.5, recall@2=1/3
+    prec, rec = 0.5, 1 / 3
+    expected = 2 * prec * rec / (prec + rec)
+    assert f1_at_k(["a", "x", "b"], rel, 2) == pytest.approx(expected)
 
 
 def test_ndcg_perfect_ranking() -> None:
@@ -128,8 +154,10 @@ def test_evaluate_run_keys() -> None:
     metrics = evaluate_run(run, qrels, k=5)
     assert "map" in metrics
     assert "r_precision" in metrics
+    assert "f1@k" in metrics
     assert 0.0 <= metrics["map"] <= 1.0
     assert 0.0 <= metrics["r_precision"] <= 1.0
+    assert 0.0 <= metrics["f1@k"] <= 1.0
 
 
 def test_compare_domains_returns_domain_keys() -> None:
@@ -149,6 +177,7 @@ def test_compare_domains_returns_domain_keys() -> None:
     for domain_metrics in report.values():
         assert "map" in domain_metrics
         assert "r_precision" in domain_metrics
+        assert "f1@k" in domain_metrics
 
 
 def test_latency_adjusted_ndcg_within_budget() -> None:
