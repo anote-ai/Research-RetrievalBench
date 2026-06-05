@@ -33,6 +33,22 @@ RetrievalBench provides a lightweight, reproducible framework for ablating Retri
 - **nDCG@k** — rank-weighted relevance
 - **MRR** — mean reciprocal rank of the first relevant result
 
+## Hardware-Aware Adaptive Scheduling
+
+The codebase also includes a synthetic systems layer for studying
+energy-efficient RAG retrieval scheduling:
+
+- Fixed-stride retrieval baselines, such as retrieving every 8 or 16 generated tokens
+- Adaptive retrieval based on uncertainty, semantic drift, retrieval-score decay, and
+  document overlap
+- Dynamic retrieval depth via top-k adjustment
+- Hardware power/frequency modes (`eco`, `balanced`, `turbo`) for edge GPU, server GPU,
+  and CPU-only profiles
+- Simulated TTFT, TBT, end-to-end latency, quality, retrieval calls, and energy in joules
+
+Run `python scripts/run_demo.py` to print both the RAG ablation table and the
+hardware-aware scheduling comparison.
+
 ## Quickstart
 
 ```bash
