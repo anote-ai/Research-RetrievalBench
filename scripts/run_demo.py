@@ -31,6 +31,23 @@ except ImportError:
     console = None  # type: ignore
 
 
+BENCHMARK_DOMAINS = (
+    Domain.FINANCE,
+    Domain.LEGAL,
+    Domain.MEDICAL,
+    Domain.TECHNICAL,
+)
+
+CONFIGS = (
+    RAGConfig("fixed_512"),
+    RAGConfig("sentence", use_reranking=True),
+    RAGConfig("fixed_512", use_metadata=True),
+    RAGConfig("recursive", use_reranking=True, use_metadata=True),
+    RAGConfig("sentence", use_query_expansion=True),
+    RAGConfig("semantic", use_reranking=True, use_metadata=True, use_query_expansion=True),
+)
+
+
 def _format_table(rows: list[dict], columns: list[str]) -> str:
     formatted_rows = []
     for row in rows:
@@ -53,39 +70,137 @@ def _format_table(rows: list[dict], columns: list[str]) -> str:
     return "\n".join([header, divider, *body])
 
 
+def _config_recall(cfg: RAGConfig, domain: Domain) -> float:
+    domain_base = {
+        Domain.FINANCE: 0.58,
+        Domain.LEGAL: 0.54,
+        Domain.MEDICAL: 0.52,
+        Domain.TECHNICAL: 0.56,
+    }[domain]
+    chunk_bonus = {
+        "fixed_512": 0.00,
+        "sentence": 0.02,
+        "recursive": 0.03,
+        "semantic": 0.04,
+    }[cfg.chunking_strategy]
+    metadata_bonus = {
+        Domain.FINANCE: 0.08,
+        Domain.LEGAL: 0.10,
+        Domain.MEDICAL: 0.12,
+        Domain.TECHNICAL: 0.07,
+    }[domain]
+    query_expansion_bonus = {
+        Domain.FINANCE: 0.10,
+        Domain.LEGAL: 0.08,
+        Domain.MEDICAL: -0.05,
+        Domain.TECHNICAL: 0.09,
+    }[domain]
+
+    recall = domain_base + chunk_bonus
+    if cfg.use_reranking:
+        recall += 0.11
+    if cfg.use_metadata:
+        recall += metadata_bonus
+    if cfg.use_query_expansion:
+        recall += query_expansion_bonus
+    return max(0.05, min(0.95, recall))
+
+
+def _config_relevance_bias(cfg: RAGConfig, domain: Domain) -> float:
+    query_expansion_bonus = {
+        Domain.FINANCE: 0.04,
+        Domain.LEGAL: 0.03,
+        Domain.MEDICAL: -0.03,
+        Domain.TECHNICAL: 0.04,
+    }[domain]
+
+    bias = 0.04
+    if cfg.chunking_strategy in {"recursive", "semantic"}:
+        bias += 0.03
+    if cfg.use_reranking:
+        bias += 0.24
+    if cfg.use_metadata:
+        bias += 0.05
+    if cfg.use_query_expansion:
+        bias += query_expansion_bonus
+    return max(0.0, min(0.50, bias))
+
+
+def _run_domain_ablation() -> tuple[RetrievalBench, dict[str, set[str]]]:
+    corpus = make_corpus(n_docs=240, seed=0, domains=BENCHMARK_DOMAINS)
+    bench = RetrievalBench()
+    all_qrels: dict[str, set[str]] = {}
+
+    for domain_index, domain in enumerate(BENCHMARK_DOMAINS):
+        queries, qrels = make_queries(
+            n=30,
+            corpus=corpus,
+            seed=domain_index,
+            domain=domain,
+            query_id_prefix=f"{domain.value}_q",
+        )
+        all_qrels.update(qrels)
+
+        for cfg in CONFIGS:
+            run = BenchmarkRun(config=cfg, domain=domain)
+            recall = _config_recall(cfg, domain)
+            for query in queries:
+                relevant_ids = qrels.get(query["query_id"], set())
+                result = make_retrieval_result(
+                    query["query_id"],
+                    corpus,
+                    relevant_ids,
+                    recall=recall,
+                    seed_salt=f"{domain.value}:{cfg.name()}",
+                    relevance_bias=_config_relevance_bias(cfg, domain),
+                )
+                run.results.append(result)
+            bench.add_run(run)
+
+    return bench, all_qrels
+
+
+def _domain_summary_rows(rows: list[dict]) -> list[dict]:
+    summary = []
+    for domain in BENCHMARK_DOMAINS:
+        domain_rows = [row for row in rows if row["domain"] == domain.value]
+        best = max(domain_rows, key=lambda row: row["ndcg@k"])
+        summary.append(
+            {
+                "domain": domain.value,
+                "best_config": best["config"],
+                "ndcg@10": best["ndcg@k"],
+                "mrr": best["mrr"],
+                "n_queries": best["n_queries"],
+            }
+        )
+    return summary
+
+
+def _domain_config_rows(rows: list[dict]) -> list[dict]:
+    domain_order = {domain.value: index for index, domain in enumerate(BENCHMARK_DOMAINS)}
+    config_order = {cfg.name(): index for index, cfg in enumerate(CONFIGS)}
+    return sorted(
+        rows,
+        key=lambda row: (
+            domain_order[row["domain"]],
+            config_order[row["config"]],
+        ),
+    )
+
+
 def main() -> None:
     print("=== RetrievalBench Demo ===")
 
-    corpus = make_corpus(n_docs=200, seed=0)
-    queries, qrels = make_queries(n=30, corpus=corpus, seed=0)
-
-    configs = [
-        RAGConfig("fixed_512"),
-        RAGConfig("sentence", use_reranking=True),
-        RAGConfig("recursive", use_reranking=True, use_metadata=True),
-        RAGConfig("semantic", use_reranking=True, use_metadata=True, use_query_expansion=True),
-        RAGConfig("fixed_512", use_metadata=True),
-        RAGConfig("sentence", use_query_expansion=True),
-    ]
-
-    bench = RetrievalBench()
-    for cfg in configs:
-        run = BenchmarkRun(config=cfg, domain=Domain.FINANCE)
-        recall_boost = 0.1 * (cfg.use_reranking + cfg.use_metadata + cfg.use_query_expansion)
-        for q in queries:
-            rel = qrels.get(q["query_id"], set())
-            res = make_retrieval_result(
-                q["query_id"], corpus, rel, recall=min(0.95, 0.6 + recall_boost)
-            )
-            run.results.append(res)
-        bench.add_run(run)
-
+    bench, qrels = _run_domain_ablation()
     rows = [evaluate_run(run, qrels, k=10) for run in bench.runs]
     rows.sort(key=lambda row: row["ndcg@k"], reverse=True)
-    print("\n--- Ablation Table (sorted by nDCG@10) ---")
+    finance_rows = [row for row in rows if row["domain"] == Domain.FINANCE.value]
+    print(f"\nEvaluated {len(CONFIGS)} configs across {len(BENCHMARK_DOMAINS)} domains.")
+    print("\n--- Finance Ablation Table (sorted by nDCG@10) ---")
     print(
         _format_table(
-            rows,
+            finance_rows,
             [
                 "config",
                 "domain",
@@ -100,9 +215,35 @@ def main() -> None:
         )
     )
 
-    best_ndcg = rows[0]["ndcg@k"]
-    best_cfg = rows[0]["config"]
+    best_ndcg = finance_rows[0]["ndcg@k"]
+    best_cfg = finance_rows[0]["config"]
     print(f"\nBest config: {best_cfg}  (nDCG@10={best_ndcg:.4f})")
+
+    print("\n--- Full 4-Domain Results (6 configs x 4 domains) ---")
+    print(
+        _format_table(
+            _domain_config_rows(rows),
+            [
+                "domain",
+                "config",
+                "recall@k",
+                "precision@k",
+                "ndcg@k",
+                "mrr",
+                "map",
+                "r_precision",
+                "n_queries",
+            ],
+        )
+    )
+
+    print("\n--- 4-Domain Comparison ---")
+    print(
+        _format_table(
+            _domain_summary_rows(rows),
+            ["domain", "best_config", "ndcg@10", "mrr", "n_queries"],
+        )
+    )
 
     print("\n--- Hardware-Aware Adaptive Retrieval Scheduling ---")
     signals = make_generation_signals(n_tokens=96, seed=7, difficulty="medium")

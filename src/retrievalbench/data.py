@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import random
 from .core import RetrievalResult, Domain
 
@@ -66,12 +67,33 @@ _QUERY_TEMPLATES = [
 ]
 
 
-def make_corpus(n_docs: int = 100, seed: int = 42) -> list[dict]:
+def _coerce_domain(domain: Domain | str) -> Domain:
+    if isinstance(domain, Domain):
+        return domain
+    return Domain(domain)
+
+
+def _normalize_domains(
+    domains: list[Domain | str] | tuple[Domain | str, ...] | None,
+) -> list[Domain]:
+    if domains is None:
+        return list(Domain)
+    normalized = [_coerce_domain(domain) for domain in domains]
+    if not normalized:
+        raise ValueError("domains must include at least one domain")
+    return normalized
+
+
+def make_corpus(
+    n_docs: int = 100,
+    seed: int = 42,
+    domains: list[Domain | str] | tuple[Domain | str, ...] | None = None,
+) -> list[dict]:
     rng = random.Random(seed)
-    domains = list(Domain)
+    domain_choices = _normalize_domains(domains)
     corpus = []
     for i in range(n_docs):
-        domain = rng.choice(domains)
+        domain = rng.choice(domain_choices)
         words = _DOMAIN_WORDS[domain]
         n_sentences = rng.randint(3, 8)
         sentences = [
@@ -94,6 +116,8 @@ def make_queries(
     corpus: list[dict] | None = None,
     seed: int = 42,
     difficulty: str = "medium",
+    domain: Domain | str | None = None,
+    query_id_prefix: str = "q",
 ) -> tuple[list[dict], dict[str, set[str]]]:
     """Generate queries with a specified difficulty level.
 
@@ -103,37 +127,60 @@ def make_queries(
         seed: Random seed for reproducibility.
         difficulty: One of 'easy', 'medium', 'hard'.  Controls the number of
             relevant documents assigned to each query.
+        domain: Optional fixed domain for all generated queries.
+        query_id_prefix: Prefix used to keep query ids unique across generated sets.
 
     Returns:
         (queries, qrels) where qrels maps query_id -> set of relevant doc_ids.
     """
     if difficulty not in _DIFFICULTY_LEVELS:
         raise ValueError(f"difficulty must be one of {list(_DIFFICULTY_LEVELS)}")
+    fixed_domain = _coerce_domain(domain) if domain is not None else None
     if corpus is None:
-        corpus = make_corpus(seed=seed)
+        corpus_domains = (fixed_domain,) if fixed_domain is not None else None
+        corpus = make_corpus(seed=seed, domains=corpus_domains)
+    domain_choices = _domains_available_in_corpus(corpus, fixed_domain)
     rng = random.Random(seed)
     min_rel, max_rel = _DIFFICULTY_LEVELS[difficulty]
     queries: list[dict] = []
     qrels: dict[str, set[str]] = {}
     for i in range(n):
-        query_id = f"q_{i:04d}"
-        domain = rng.choice(list(Domain))
-        words = _DOMAIN_WORDS[domain]
+        query_id = f"{query_id_prefix}_{i:04d}"
+        query_domain = fixed_domain or rng.choice(domain_choices)
+        words = _DOMAIN_WORDS[query_domain]
         template = rng.choice(_QUERY_TEMPLATES)
         query_text = template.format(w1=rng.choice(words), w2=rng.choice(words))
-        domain_docs = [d for d in corpus if d["domain"] == domain.value]
-        n_relevant = rng.randint(min_rel, min(max_rel, len(domain_docs)))
+        domain_docs = [d for d in corpus if d["domain"] == query_domain.value]
+        max_available = min(max_rel, len(domain_docs))
+        min_available = min(min_rel, max_available)
+        n_relevant = rng.randint(min_available, max_available)
         relevant = rng.sample(domain_docs, max(1, n_relevant))
         qrels[query_id] = {d["doc_id"] for d in relevant}
         queries.append(
             {
                 "query_id": query_id,
                 "text": query_text,
-                "domain": domain.value,
+                "domain": query_domain.value,
                 "difficulty": difficulty,
             }
         )
     return queries, qrels
+
+
+def _domains_available_in_corpus(
+    corpus: list[dict],
+    fixed_domain: Domain | None,
+) -> list[Domain]:
+    available_values = {doc["domain"] for doc in corpus}
+    if fixed_domain is not None:
+        if fixed_domain.value not in available_values:
+            raise ValueError(f"corpus does not contain documents for domain '{fixed_domain.value}'")
+        return [fixed_domain]
+
+    domain_choices = [domain for domain in Domain if domain.value in available_values]
+    if not domain_choices:
+        raise ValueError("corpus must contain at least one document with a known domain")
+    return domain_choices
 
 
 def make_retrieval_result(
@@ -141,17 +188,29 @@ def make_retrieval_result(
     corpus: list[dict],
     relevant_ids: set[str],
     recall: float = 0.7,
+    seed_salt: str = "",
+    relevance_bias: float = 0.0,
 ) -> RetrievalResult:
-    rng = random.Random(hash(query_id))
+    seed_material = f"{query_id}:{seed_salt}:{recall:.4f}"
+    seed = int.from_bytes(hashlib.sha256(seed_material.encode("utf-8")).digest()[:8], "big")
+    rng = random.Random(seed)
     all_ids = [d["doc_id"] for d in corpus]
     non_relevant = [d for d in all_ids if d not in relevant_ids]
     n_rel_include = max(1, round(len(relevant_ids) * recall))
     included_rel = rng.sample(list(relevant_ids), min(n_rel_include, len(relevant_ids)))
     filler = rng.sample(non_relevant, min(10 - len(included_rel), len(non_relevant)))
-    retrieved = included_rel + filler
-    rng.shuffle(retrieved)
-    retrieved = retrieved[:10]
-    scores = sorted([rng.random() for _ in retrieved], reverse=True)
+    candidates = included_rel + filler
+    bias = max(0.0, min(1.0, relevance_bias))
+    scored = [
+        (
+            doc_id,
+            min(1.0, rng.random() + (bias if doc_id in relevant_ids else 0.0)),
+        )
+        for doc_id in candidates
+    ]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    retrieved = [doc_id for doc_id, _ in scored[:10]]
+    scores = [score for _, score in scored[:10]]
     return RetrievalResult(
         query_id=query_id,
         retrieved_ids=retrieved,
