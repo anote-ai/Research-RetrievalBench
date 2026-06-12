@@ -36,6 +36,18 @@ class RAGConfig:
                 f"got '{self.chunking_strategy}'"
             )
 
+    def name(self) -> str:
+        """Human-readable identifier for this config."""
+        flags = []
+        if self.use_reranking:
+            flags.append("rerank")
+        if self.use_metadata:
+            flags.append("meta")
+        if self.use_query_expansion:
+            flags.append("qe")
+        suffix = "+".join(flags) if flags else "base"
+        return f"{self.embedding_model}/{self.chunking_strategy}/{suffix}"
+
 
 @dataclass
 class RetrievalResult:
