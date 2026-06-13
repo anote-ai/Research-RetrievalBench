@@ -13,6 +13,7 @@ from .core import (
 from .evaluate import (
     recall_at_k,
     precision_at_k,
+    f1_at_k,
     ndcg_at_k,
     mean_reciprocal_rank,
     average_precision,
@@ -35,6 +36,7 @@ __all__ = [
     "RetrievalBench",
     "recall_at_k",
     "precision_at_k",
+    "f1_at_k",
     "ndcg_at_k",
     "mean_reciprocal_rank",
     "average_precision",

@@ -20,6 +20,15 @@ def precision_at_k(retrieved_ids: list[str], relevant_ids: set[str], k: int) -> 
     return hits / k
 
 
+def f1_at_k(retrieved_ids: list[str], relevant_ids: set[str], k: int) -> float:
+    """Harmonic mean of precision@k and recall@k."""
+    prec = precision_at_k(retrieved_ids, relevant_ids, k)
+    rec = recall_at_k(retrieved_ids, relevant_ids, k)
+    if prec + rec == 0:
+        return 0.0
+    return 2 * prec * rec / (prec + rec)
+
+
 def ndcg_at_k(retrieved_ids: list[str], relevant_ids: set[str], k: int) -> float:
     """Normalized Discounted Cumulative Gain at k."""
 
@@ -118,11 +127,12 @@ def evaluate_run(
     run: BenchmarkRun, qrels: dict[str, set[str]], k: int = 10
 ) -> dict:
     """Compute aggregate metrics for a benchmark run."""
-    recalls, precisions, ndcgs, mrrs, aps, r_precs = [], [], [], [], [], []
+    recalls, precisions, f1s, ndcgs, mrrs, aps, r_precs = [], [], [], [], [], [], []
     for result in run.results:
         rel = qrels.get(result.query_id, set())
         recalls.append(recall_at_k(result.retrieved_ids, rel, k))
         precisions.append(precision_at_k(result.retrieved_ids, rel, k))
+        f1s.append(f1_at_k(result.retrieved_ids, rel, k))
         ndcgs.append(ndcg_at_k(result.retrieved_ids, rel, k))
         mrrs.append(mean_reciprocal_rank(result.retrieved_ids, rel))
         aps.append(average_precision(result.retrieved_ids, rel))
@@ -136,6 +146,7 @@ def evaluate_run(
         "domain": run.domain.value,
         "recall@k": mean(recalls),
         "precision@k": mean(precisions),
+        "f1@k": mean(f1s),
         "ndcg@k": mean(ndcgs),
         "mrr": mean(mrrs),
         "map": mean(aps),
@@ -158,7 +169,7 @@ def compare_domains(
         domain_metrics[run.domain.value].append(metrics)
 
     result: dict[str, dict[str, float]] = {}
-    scalar_keys = ["recall@k", "precision@k", "ndcg@k", "mrr", "map", "r_precision"]
+    scalar_keys = ["recall@k", "precision@k", "f1@k", "ndcg@k", "mrr", "map", "r_precision"]
     for domain, metrics_list in domain_metrics.items():
         result[domain] = {
             key: sum(m[key] for m in metrics_list) / len(metrics_list)
