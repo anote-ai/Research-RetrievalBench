@@ -23,6 +23,21 @@ from .evaluate import (
     compare_domains,
     ablation_table,
 )
+from .scheduling import (
+    PowerMode,
+    HardwareProfile,
+    EDGE_GPU,
+    SERVER_GPU,
+    CPU_ONLY,
+    HARDWARE_PROFILES,
+    RetrievalSignal,
+    RetrievalAction,
+    FixedStrideScheduler,
+    AdaptiveRetrievalScheduler,
+    ScheduledRun,
+    make_generation_signals,
+    simulate_scheduled_generation,
+)
 
 __all__ = [
     "Domain",
@@ -45,5 +60,18 @@ __all__ = [
     "evaluate_run",
     "compare_domains",
     "ablation_table",
+    "PowerMode",
+    "HardwareProfile",
+    "EDGE_GPU",
+    "SERVER_GPU",
+    "CPU_ONLY",
+    "HARDWARE_PROFILES",
+    "RetrievalSignal",
+    "RetrievalAction",
+    "FixedStrideScheduler",
+    "AdaptiveRetrievalScheduler",
+    "ScheduledRun",
+    "make_generation_signals",
+    "simulate_scheduled_generation",
 ]
 __version__ = "0.2.0"
