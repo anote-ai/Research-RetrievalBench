@@ -9,6 +9,9 @@ from retrievalbench.evaluate import (
     average_precision,
     mean_average_precision,
     r_precision,
+    confidence_interval,
+    score_variance,
+    paired_t_test,
     evaluate_run,
     compare_domains,
     latency_adjusted_ndcg,
@@ -200,3 +203,73 @@ def test_query_difficulty_hard() -> None:
 
 def test_query_difficulty_medium() -> None:
     assert query_difficulty_tier({"a", "b", "c"}, corpus_size=100) == "medium"
+
+
+# --- statistical significance tests ---
+
+def test_confidence_interval_contains_mean() -> None:
+    values = [0.6, 0.7, 0.8, 0.65, 0.75]
+    lo, hi = confidence_interval(values)
+    mean = sum(values) / len(values)
+    assert lo < mean < hi
+
+
+def test_confidence_interval_single_value() -> None:
+    lo, hi = confidence_interval([0.5])
+    assert lo == pytest.approx(0.5)
+    assert hi == pytest.approx(0.5)
+
+
+def test_confidence_interval_wider_at_99() -> None:
+    values = [0.5, 0.6, 0.7, 0.8, 0.9]
+    lo_95, hi_95 = confidence_interval(values, confidence=0.95)
+    lo_99, hi_99 = confidence_interval(values, confidence=0.99)
+    assert (hi_99 - lo_99) > (hi_95 - lo_95)
+
+
+def test_score_variance_identical() -> None:
+    assert score_variance([0.5, 0.5, 0.5]) == pytest.approx(0.0)
+
+
+def test_score_variance_single() -> None:
+    assert score_variance([0.8]) == pytest.approx(0.0)
+
+
+def test_score_variance_positive() -> None:
+    assert score_variance([0.2, 0.8]) > 0.0
+
+
+def test_paired_t_test_identical() -> None:
+    result = paired_t_test([0.5, 0.6, 0.7], [0.5, 0.6, 0.7])
+    assert result["t_stat"] == pytest.approx(0.0)
+    assert not result["significant"]
+
+
+def test_paired_t_test_clearly_different() -> None:
+    a = [0.9] * 30
+    b = [0.1] * 30
+    result = paired_t_test(a, b)
+    assert result["significant"]
+    assert result["t_stat"] > 0
+
+
+def test_paired_t_test_length_mismatch() -> None:
+    with pytest.raises(ValueError):
+        paired_t_test([0.5, 0.6], [0.5])
+
+
+def test_evaluate_run_has_ci_keys() -> None:
+    config = RAGConfig("fixed_512")
+    run = BenchmarkRun(config=config, domain=Domain.FINANCE)
+    for i in range(5):
+        run.results.append(
+            RetrievalResult(f"q_{i:04d}", ["doc_0000", "doc_0001"], [0.9, 0.7])
+        )
+    qrels = {f"q_{i:04d}": {"doc_0000"} for i in range(5)}
+    metrics = evaluate_run(run, qrels, k=5)
+    assert "ndcg@k_ci_lower" in metrics
+    assert "ndcg@k_ci_upper" in metrics
+    assert "ndcg@k_variance" in metrics
+    assert "mrr_ci_lower" in metrics
+    assert "mrr_ci_upper" in metrics
+    assert metrics["ndcg@k_ci_lower"] <= metrics["ndcg@k"] <= metrics["ndcg@k_ci_upper"]
