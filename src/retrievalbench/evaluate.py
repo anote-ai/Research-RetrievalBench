@@ -1,6 +1,7 @@
 from __future__ import annotations
 import math
 import statistics
+import random
 from .core import BenchmarkRun
 
 
@@ -124,24 +125,31 @@ def query_difficulty_tier(relevant_ids: set[str], corpus_size: int) -> str:
     return "hard"
 
 
-def confidence_interval(
-    values: list[float], confidence: float = 0.95
+def bootstrap_ci(
+    values: list[float],
+    confidence: float = 0.95,
+    n_resamples: int = 1000,
+    seed: int = 42,
 ) -> tuple[float, float]:
-    """Return (lower, upper) confidence interval for the mean using t-distribution.
+    """Bootstrap confidence interval for the mean (percentile method).
 
-    Falls back to (mean, mean) when fewer than 2 samples are available.
+    Uses 1000 resamples by default, as required for conference submissions.
+    Returns (lower, upper) bounds.
     """
     n = len(values)
     if n < 2:
         m = values[0] if values else 0.0
         return (m, m)
-    m = statistics.mean(values)
-    se = statistics.stdev(values) / math.sqrt(n)
-    # t critical value via Cornish-Fisher approximation for common levels
-    _t_table = {0.90: 1.645, 0.95: 1.960, 0.99: 2.576}
-    t = _t_table.get(confidence, 1.960)
-    margin = t * se
-    return (m - margin, m + margin)
+    rng = random.Random(seed)
+    boot_means = []
+    for _ in range(n_resamples):
+        sample = [rng.choice(values) for _ in range(n)]
+        boot_means.append(sum(sample) / n)
+    boot_means.sort()
+    alpha = 1 - confidence
+    lo_idx = int(alpha / 2 * n_resamples)
+    hi_idx = int((1 - alpha / 2) * n_resamples) - 1
+    return (boot_means[lo_idx], boot_means[hi_idx])
 
 
 def score_variance(values: list[float]) -> float:
@@ -149,62 +157,111 @@ def score_variance(values: list[float]) -> float:
     return statistics.variance(values) if len(values) >= 2 else 0.0
 
 
-def paired_t_test(scores_a: list[float], scores_b: list[float]) -> dict:
-    """Paired t-test comparing two sets of per-query scores.
+def permutation_test(
+    scores_a: list[float],
+    scores_b: list[float],
+    n_resamples: int = 1000,
+    seed: int = 42,
+) -> dict:
+    """Paired permutation test comparing two configs' per-query scores.
 
-    Returns t-statistic, p-value (two-tailed), and whether the difference
-    is significant at alpha=0.05.
+    More appropriate than t-test for IR metrics (non-normal distributions).
+    Returns p-value (two-tailed) and significance at alpha=0.05.
     """
     if len(scores_a) != len(scores_b):
         raise ValueError("score lists must have equal length")
     n = len(scores_a)
     if n < 2:
-        return {"t_stat": 0.0, "p_value": 1.0, "significant": False, "n": n}
-    diffs = [a - b for a, b in zip(scores_a, scores_b)]
-    mean_diff = statistics.mean(diffs)
-    std_diff = statistics.stdev(diffs)
-    if std_diff == 0.0:
-        # all differences identical — significant if mean_diff != 0
-        sig = mean_diff != 0.0
-        return {"t_stat": float("inf") if sig else 0.0, "p_value": 0.0 if sig else 1.0, "significant": sig, "n": n}
-    t_stat = mean_diff / (std_diff / math.sqrt(n))
-    # Two-tailed p-value approximated via normalisation for n >= 30,
-    # or conservative t-table lookup for small samples.
-    abs_t = abs(t_stat)
-    if n >= 30:
-        # Normal approximation
-        p_value = 2 * (1 - _normal_cdf(abs_t))
-    else:
-        # Conservative: compare against t critical values at df = n-1
-        p_value = _t_p_approx(abs_t, df=n - 1)
+        return {"observed_diff": 0.0, "p_value": 1.0, "significant": False, "n": n}
+    observed_diff = abs(
+        sum(scores_a) / n - sum(scores_b) / n
+    )
+    rng = random.Random(seed)
+    count_extreme = 0
+    for _ in range(n_resamples):
+        perm_a, perm_b = [], []
+        for a, b in zip(scores_a, scores_b):
+            if rng.random() < 0.5:
+                perm_a.append(a)
+                perm_b.append(b)
+            else:
+                perm_a.append(b)
+                perm_b.append(a)
+        diff = abs(sum(perm_a) / n - sum(perm_b) / n)
+        if diff >= observed_diff:
+            count_extreme += 1
+    p_value = count_extreme / n_resamples
     return {
-        "t_stat": round(t_stat, 4),
+        "observed_diff": round(observed_diff, 4),
         "p_value": round(p_value, 4),
         "significant": p_value < 0.05,
         "n": n,
     }
 
 
-def _normal_cdf(z: float) -> float:
-    """Standard normal CDF using math.erf."""
-    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+def bonferroni_correct(p_values: list[float]) -> list[float]:
+    """Apply Bonferroni correction to a list of p-values."""
+    m = len(p_values)
+    return [min(p * m, 1.0) for p in p_values]
 
 
-def _t_p_approx(abs_t: float, df: int) -> float:
-    """Conservative two-tailed p-value approximation for small samples."""
-    # Critical values at alpha=0.05 and 0.01 for common df
-    crit_05 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
-                6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
-                15: 2.131, 20: 2.086, 25: 2.060, 29: 2.045}
-    crit_01 = {1: 63.657, 2: 9.925, 3: 5.841, 4: 4.604, 5: 4.032,
-                6: 3.707, 7: 3.499, 8: 3.355, 9: 3.250, 10: 3.169,
-                15: 2.947, 20: 2.845, 25: 2.787, 29: 2.756}
-    key = min(crit_05.keys(), key=lambda k: abs(k - df))
-    if abs_t >= crit_01.get(key, 3.0):
-        return 0.005
-    if abs_t >= crit_05.get(key, 2.0):
-        return 0.04
-    return 0.5
+def cohens_d(scores_a: list[float], scores_b: list[float]) -> float:
+    """Cohen's d effect size between two sets of per-query scores."""
+    if len(scores_a) < 2 or len(scores_b) < 2:
+        return 0.0
+    mean_a = statistics.mean(scores_a)
+    mean_b = statistics.mean(scores_b)
+    pooled_std = math.sqrt(
+        (statistics.variance(scores_a) + statistics.variance(scores_b)) / 2
+    )
+    if pooled_std == 0:
+        return 0.0
+    return (mean_a - mean_b) / pooled_std
+
+
+def kendall_tau(ranking_a: list[str], ranking_b: list[str]) -> float:
+    """Kendall's tau rank correlation between two config orderings.
+
+    Measures how stable the ranking of configs is across two metrics or domains.
+    Returns value in [-1, 1]; 1 = identical ordering, -1 = reversed.
+    """
+    n = len(ranking_a)
+    if n < 2:
+        return 1.0
+    pos_a = {item: i for i, item in enumerate(ranking_a)}
+    concordant = discordant = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            a_order = pos_a[ranking_a[i]] - pos_a[ranking_a[j]]
+            b_i = ranking_b.index(ranking_a[i]) if ranking_a[i] in ranking_b else -1
+            b_j = ranking_b.index(ranking_a[j]) if ranking_a[j] in ranking_b else -1
+            if b_i == -1 or b_j == -1:
+                continue
+            b_order = b_i - b_j
+            if a_order * b_order > 0:
+                concordant += 1
+            elif a_order * b_order < 0:
+                discordant += 1
+    total = concordant + discordant
+    return (concordant - discordant) / total if total > 0 else 0.0
+
+
+def multi_seed_variance(
+    score_lists: list[list[float]],
+) -> dict:
+    """Compute mean ± std across multiple random seeds.
+
+    Args:
+        score_lists: One list of per-query scores per seed (at least 3 seeds).
+    Returns:
+        dict with mean, std, and per-seed means.
+    """
+    if not score_lists:
+        return {"mean": 0.0, "std": 0.0, "seed_means": []}
+    seed_means = [sum(s) / len(s) for s in score_lists if s]
+    mean = sum(seed_means) / len(seed_means)
+    std = statistics.stdev(seed_means) if len(seed_means) >= 2 else 0.0
+    return {"mean": round(mean, 4), "std": round(std, 4), "seed_means": seed_means}
 
 
 def evaluate_run(
@@ -225,8 +282,8 @@ def evaluate_run(
     def mean(lst: list[float]) -> float:
         return sum(lst) / len(lst) if lst else 0.0
 
-    ndcg_ci = confidence_interval(ndcgs) if ndcgs else (0.0, 0.0)
-    mrr_ci = confidence_interval(mrrs) if mrrs else (0.0, 0.0)
+    ndcg_ci = bootstrap_ci(ndcgs) if ndcgs else (0.0, 0.0)
+    mrr_ci = bootstrap_ci(mrrs) if mrrs else (0.0, 0.0)
 
     return {
         "config": run.config.name(),

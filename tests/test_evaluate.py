@@ -9,9 +9,13 @@ from retrievalbench.evaluate import (
     average_precision,
     mean_average_precision,
     r_precision,
-    confidence_interval,
+    bootstrap_ci,
     score_variance,
-    paired_t_test,
+    permutation_test,
+    bonferroni_correct,
+    cohens_d,
+    kendall_tau,
+    multi_seed_variance,
     evaluate_run,
     compare_domains,
     latency_adjusted_ndcg,
@@ -207,24 +211,24 @@ def test_query_difficulty_medium() -> None:
 
 # --- statistical significance tests ---
 
-def test_confidence_interval_contains_mean() -> None:
+def test_bootstrap_ci_contains_mean() -> None:
     values = [0.6, 0.7, 0.8, 0.65, 0.75]
-    lo, hi = confidence_interval(values)
+    lo, hi = bootstrap_ci(values, n_resamples=1000)
     mean = sum(values) / len(values)
     assert lo < mean < hi
 
 
-def test_confidence_interval_single_value() -> None:
-    lo, hi = confidence_interval([0.5])
+def test_bootstrap_ci_single_value() -> None:
+    lo, hi = bootstrap_ci([0.5])
     assert lo == pytest.approx(0.5)
     assert hi == pytest.approx(0.5)
 
 
-def test_confidence_interval_wider_at_99() -> None:
+def test_bootstrap_ci_wider_at_99() -> None:
     values = [0.5, 0.6, 0.7, 0.8, 0.9]
-    lo_95, hi_95 = confidence_interval(values, confidence=0.95)
-    lo_99, hi_99 = confidence_interval(values, confidence=0.99)
-    assert (hi_99 - lo_99) > (hi_95 - lo_95)
+    lo_95, hi_95 = bootstrap_ci(values, confidence=0.95, n_resamples=1000)
+    lo_99, hi_99 = bootstrap_ci(values, confidence=0.99, n_resamples=1000)
+    assert (hi_99 - lo_99) >= (hi_95 - lo_95)
 
 
 def test_score_variance_identical() -> None:
@@ -239,23 +243,61 @@ def test_score_variance_positive() -> None:
     assert score_variance([0.2, 0.8]) > 0.0
 
 
-def test_paired_t_test_identical() -> None:
-    result = paired_t_test([0.5, 0.6, 0.7], [0.5, 0.6, 0.7])
-    assert result["t_stat"] == pytest.approx(0.0)
+def test_permutation_test_identical() -> None:
+    result = permutation_test([0.5, 0.6, 0.7], [0.5, 0.6, 0.7])
     assert not result["significant"]
 
 
-def test_paired_t_test_clearly_different() -> None:
+def test_permutation_test_clearly_different() -> None:
     a = [0.9] * 30
     b = [0.1] * 30
-    result = paired_t_test(a, b)
+    result = permutation_test(a, b, n_resamples=1000)
     assert result["significant"]
-    assert result["t_stat"] > 0
 
 
-def test_paired_t_test_length_mismatch() -> None:
+def test_permutation_test_length_mismatch() -> None:
     with pytest.raises(ValueError):
-        paired_t_test([0.5, 0.6], [0.5])
+        permutation_test([0.5, 0.6], [0.5])
+
+
+def test_bonferroni_correct() -> None:
+    corrected = bonferroni_correct([0.01, 0.03, 0.05])
+    assert corrected[0] == pytest.approx(0.03)
+    assert corrected[1] == pytest.approx(0.09)
+    assert corrected[2] == pytest.approx(0.15)
+
+
+def test_bonferroni_caps_at_1() -> None:
+    corrected = bonferroni_correct([0.5, 0.5])
+    assert all(p <= 1.0 for p in corrected)
+
+
+def test_cohens_d_identical() -> None:
+    assert cohens_d([0.5, 0.6, 0.7], [0.5, 0.6, 0.7]) == pytest.approx(0.0)
+
+
+def test_cohens_d_large_effect() -> None:
+    a = [0.85, 0.90, 0.88, 0.92, 0.87]
+    b = [0.12, 0.10, 0.15, 0.11, 0.13]
+    assert abs(cohens_d(a, b)) > 1.0
+
+
+def test_kendall_tau_identical() -> None:
+    configs = ["a", "b", "c"]
+    assert kendall_tau(configs, configs) == pytest.approx(1.0)
+
+
+def test_kendall_tau_reversed() -> None:
+    assert kendall_tau(["a", "b", "c"], ["c", "b", "a"]) == pytest.approx(-1.0)
+
+
+def test_multi_seed_variance_three_seeds() -> None:
+    seeds = [[0.7, 0.8, 0.75], [0.72, 0.78, 0.74], [0.68, 0.82, 0.76]]
+    result = multi_seed_variance(seeds)
+    assert "mean" in result
+    assert "std" in result
+    assert len(result["seed_means"]) == 3
+    assert result["std"] >= 0.0
 
 
 def test_evaluate_run_has_ci_keys() -> None:
