@@ -14,6 +14,7 @@ from retrievalbench.core import (
 )
 from retrievalbench.data import make_corpus, make_queries, make_retrieval_result
 from retrievalbench.evaluate import evaluate_run
+from retrievalbench.cost import build_leaderboard, leaderboard_rows
 from retrievalbench.scheduling import (
     AdaptiveRetrievalScheduler,
     CPU_ONLY,
@@ -250,6 +251,18 @@ def main() -> None:
             ["domain", "best_config", "ndcg@10", "mrr", "n_queries"],
         )
     )
+
+    print("\n--- Cost-Latency-Quality Leaderboard (Finance, averaged across configs) ---")
+    finance_rows = [row for row in rows if row["domain"] == Domain.FINANCE.value]
+    leaderboard = build_leaderboard(finance_rows)
+    print(
+        _format_table(
+            leaderboard_rows(leaderboard),
+            ["system", "ndcg@10", "latency_ms", "cost_per_1k_usd", "pareto_optimal"],
+        )
+    )
+    pareto_systems = [p.system for p in leaderboard if p.pareto_optimal]
+    print(f"\nPareto-optimal systems: {', '.join(pareto_systems)}")
 
     print("\n--- Hardware-Aware Adaptive Retrieval Scheduling ---")
     signals = make_generation_signals(n_tokens=96, seed=7, difficulty="medium")

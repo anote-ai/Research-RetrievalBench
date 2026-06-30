@@ -30,6 +30,14 @@ from .evaluate import (
     compare_domains,
     ablation_table,
 )
+from .cost import (
+    OperatingPoint,
+    estimate_cost,
+    estimate_latency,
+    pareto_frontier,
+    build_leaderboard,
+    leaderboard_rows,
+)
 from .scheduling import (
     PowerMode,
     HardwareProfile,
@@ -74,6 +82,12 @@ __all__ = [
     "evaluate_run",
     "compare_domains",
     "ablation_table",
+    "OperatingPoint",
+    "estimate_cost",
+    "estimate_latency",
+    "pareto_frontier",
+    "build_leaderboard",
+    "leaderboard_rows",
     "PowerMode",
     "HardwareProfile",
     "EDGE_GPU",
