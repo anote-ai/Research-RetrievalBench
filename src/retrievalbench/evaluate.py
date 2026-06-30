@@ -93,6 +93,40 @@ def r_precision(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
     return hits / r
 
 
+def bridge_recall_at_k(
+    retrieved_ids: list[str],
+    bridge_ids: set[str],
+    k: int,
+) -> float:
+    """Bridge-recall@k for multi-hop queries.
+
+    Standard recall@k gives partial credit when only some bridge documents are
+    retrieved. Bridge-recall is stricter: the chain is only considered covered
+    if *all* bridge documents appear in the top-k results, because missing any
+    one link breaks the reasoning chain.
+
+    Returns 1.0 if all bridge docs are in top-k, else the fraction retrieved
+    (so partial chains still contribute a non-zero signal).
+    """
+    if not bridge_ids:
+        return 0.0
+    retrieved_k = set(retrieved_ids[:k])
+    hits = len(retrieved_k & bridge_ids)
+    return hits / len(bridge_ids)
+
+
+def bridge_recall_strict_at_k(
+    retrieved_ids: list[str],
+    bridge_ids: set[str],
+    k: int,
+) -> float:
+    """Strict bridge-recall: 1.0 only if ALL bridge docs are in top-k, else 0.0."""
+    if not bridge_ids:
+        return 0.0
+    retrieved_k = set(retrieved_ids[:k])
+    return 1.0 if bridge_ids <= retrieved_k else 0.0
+
+
 def latency_adjusted_ndcg(
     retrieved_ids: list[str],
     relevant_ids: set[str],

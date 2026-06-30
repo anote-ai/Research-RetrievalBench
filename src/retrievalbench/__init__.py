@@ -1,4 +1,5 @@
 """RetrievalBench: RAG configuration benchmarking toolkit."""
+from .data import QUERY_TYPES, make_corpus, make_queries, make_retrieval_result
 from .core import (
     Domain,
     CHUNKING_STRATEGIES,
@@ -11,6 +12,8 @@ from .core import (
     RetrievalBench,
 )
 from .evaluate import (
+    bridge_recall_at_k,
+    bridge_recall_strict_at_k,
     recall_at_k,
     precision_at_k,
     f1_at_k,
@@ -55,6 +58,10 @@ from .scheduling import (
 )
 
 __all__ = [
+    "QUERY_TYPES",
+    "make_corpus",
+    "make_queries",
+    "make_retrieval_result",
     "Domain",
     "CHUNKING_STRATEGIES",
     "RETRIEVAL_STRATEGIES",
@@ -64,6 +71,8 @@ __all__ = [
     "RetrievalResult",
     "BenchmarkRun",
     "RetrievalBench",
+    "bridge_recall_at_k",
+    "bridge_recall_strict_at_k",
     "recall_at_k",
     "precision_at_k",
     "f1_at_k",
