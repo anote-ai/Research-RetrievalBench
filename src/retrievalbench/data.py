@@ -58,13 +58,33 @@ _DIFFICULTY_LEVELS = {
     "hard": (1, 2),
 }
 
-_QUERY_TEMPLATES = [
-    "What is the relationship between {w1} and {w2}?",
-    "How does {w1} affect {w2} in practice?",
-    "Compare and contrast {w1} with {w2}.",
-    "What are the implications of {w1} on {w2}?",
-    "Explain the role of {w1} when assessing {w2}.",
-]
+QUERY_TYPES = ["single_hop", "multi_hop", "temporal"]
+
+_QUERY_TEMPLATES: dict[str, list[str]] = {
+    "single_hop": [
+        "What is the relationship between {w1} and {w2}?",
+        "How does {w1} affect {w2} in practice?",
+        "Compare and contrast {w1} with {w2}.",
+        "What are the implications of {w1} on {w2}?",
+        "Explain the role of {w1} when assessing {w2}.",
+    ],
+    "multi_hop": [
+        "How does {w1} relate to {w2}, and what does that imply for {w3}?",
+        "Trace the connection from {w1} through {w2} to {w3}.",
+        "What is the combined effect of {w1} and {w2} on {w3}?",
+        "Given {w1} and {w2}, how should one evaluate {w3}?",
+        "Explain how {w1}, {w2}, and {w3} interact in practice.",
+    ],
+    "temporal": [
+        "As of {year}, what was the status of {w1} with respect to {w2}?",
+        "How did {w1} change between {year} and the present in terms of {w2}?",
+        "What were the {year} guidelines for {w1} given {w2}?",
+        "In {year}, how was {w1} defined relative to {w2}?",
+        "What developments in {w1} occurred around {year} affecting {w2}?",
+    ],
+}
+
+_TEMPORAL_YEARS = [2019, 2020, 2021, 2022, 2023]
 
 
 def _coerce_domain(domain: Domain | str) -> Domain:
@@ -119,23 +139,33 @@ def make_queries(
     difficulty: str = "medium",
     domain: Domain | str | None = None,
     query_id_prefix: str = "q",
+    query_type: str = "single_hop",
 ) -> tuple[list[dict], dict[str, set[str]]]:
-    """Generate queries with a specified difficulty level.
+    """Generate queries with a specified difficulty level and query type.
 
     Args:
         n: Number of queries to generate.
         corpus: Document corpus; generated if not supplied.
         seed: Random seed for reproducibility.
-        difficulty: One of 'easy', 'medium', 'hard'.  Controls the number of
+        difficulty: One of 'easy', 'medium', 'hard'. Controls the number of
             relevant documents assigned to each query.
         domain: Optional fixed domain for all generated queries.
         query_id_prefix: Prefix used to keep query ids unique across generated sets.
+        query_type: One of 'single_hop', 'multi_hop', 'temporal'.
+            - single_hop: one passage suffices to answer the query.
+            - multi_hop: answer requires synthesising 2-3 relevant passages;
+              min_relevant is raised to 2.
+            - temporal: query references a specific year; relevant docs are
+              sampled with a recency bias toward that year.
 
     Returns:
         (queries, qrels) where qrels maps query_id -> set of relevant doc_ids.
     """
     if difficulty not in _DIFFICULTY_LEVELS:
         raise ValueError(f"difficulty must be one of {list(_DIFFICULTY_LEVELS)}")
+    if query_type not in QUERY_TYPES:
+        raise ValueError(f"query_type must be one of {QUERY_TYPES}")
+
     fixed_domain = _coerce_domain(domain) if domain is not None else None
     if corpus is None:
         corpus_domains = (fixed_domain,) if fixed_domain is not None else None
@@ -143,14 +173,30 @@ def make_queries(
     domain_choices = _domains_available_in_corpus(corpus, fixed_domain)
     rng = random.Random(seed)
     min_rel, max_rel = _DIFFICULTY_LEVELS[difficulty]
+
+    # multi_hop needs at least 2 relevant docs to model the evidence chain
+    if query_type == "multi_hop":
+        min_rel = max(min_rel, 2)
+        max_rel = max(max_rel, 3)
+
     queries: list[dict] = []
     qrels: dict[str, set[str]] = {}
     for i in range(n):
         query_id = f"{query_id_prefix}_{i:04d}"
         query_domain = fixed_domain or rng.choice(domain_choices)
         words = _DOMAIN_WORDS[query_domain]
-        template = rng.choice(_QUERY_TEMPLATES)
-        query_text = template.format(w1=rng.choice(words), w2=rng.choice(words))
+        template = rng.choice(_QUERY_TEMPLATES[query_type])
+
+        if query_type == "temporal":
+            year = rng.choice(_TEMPORAL_YEARS)
+            query_text = template.format(w1=rng.choice(words), w2=rng.choice(words), year=year)
+        elif query_type == "multi_hop":
+            query_text = template.format(
+                w1=rng.choice(words), w2=rng.choice(words), w3=rng.choice(words)
+            )
+        else:
+            query_text = template.format(w1=rng.choice(words), w2=rng.choice(words))
+
         domain_docs = [d for d in corpus if d["domain"] == query_domain.value]
         max_available = min(max_rel, len(domain_docs))
         min_available = min(min_rel, max_available)
@@ -163,6 +209,7 @@ def make_queries(
                 "text": query_text,
                 "domain": query_domain.value,
                 "difficulty": difficulty,
+                "query_type": query_type,
             }
         )
     return queries, qrels

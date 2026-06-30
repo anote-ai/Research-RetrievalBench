@@ -13,7 +13,13 @@ from retrievalbench.core import (
     RetrievalBench,
 )
 from retrievalbench.data import make_corpus, make_queries, make_retrieval_result
-from retrievalbench.evaluate import evaluate_run, nugget_recall_at_k, position_bias_audit
+from retrievalbench.evaluate import (
+    bridge_recall_at_k,
+    bridge_recall_strict_at_k,
+    evaluate_run,
+    nugget_recall_at_k,
+    position_bias_audit,
+)
 from retrievalbench.data import make_nuggets
 from retrievalbench.cost import build_leaderboard, leaderboard_rows
 from retrievalbench.scheduling import (
@@ -174,6 +180,115 @@ def _run_domain_ablation() -> tuple[RetrievalBench, dict[str, set[str]], list[di
     return bench, all_qrels, corpus
 
 
+def _run_query_type_ablation() -> dict[str, tuple[RetrievalBench, dict[str, set[str]]]]:
+    """Run the ablation separately for each query type.
+
+    Returns a dict mapping query_type -> (bench, qrels) so that per-type
+    nDCG and bridge-recall can be computed and compared.
+    """
+    corpus = make_corpus(n_docs=240, seed=0, domains=BENCHMARK_DOMAINS)
+    results: dict[str, tuple[RetrievalBench, dict[str, set[str]]]] = {}
+
+    for query_type in ("single_hop", "multi_hop", "temporal"):
+        bench = RetrievalBench()
+        all_qrels: dict[str, set[str]] = {}
+
+        for domain_index, domain in enumerate(BENCHMARK_DOMAINS):
+            queries, qrels = make_queries(
+                n=10,
+                corpus=corpus,
+                seed=domain_index + 10,
+                domain=domain,
+                query_id_prefix=f"{domain.value}_{query_type}_q",
+                query_type=query_type,
+            )
+            all_qrels.update(qrels)
+
+            for cfg in CONFIGS:
+                run = BenchmarkRun(config=cfg, domain=domain)
+                recall = _config_recall(cfg, domain)
+                # multi_hop is harder — apply a recall penalty to model
+                # the difficulty of retrieving all bridge documents
+                if query_type == "multi_hop":
+                    recall *= 0.75
+                for query in queries:
+                    relevant_ids = qrels.get(query["query_id"], set())
+                    result = make_retrieval_result(
+                        query["query_id"],
+                        corpus,
+                        relevant_ids,
+                        recall=recall,
+                        seed_salt=f"{domain.value}:{cfg.name()}:{query_type}",
+                        relevance_bias=_config_relevance_bias(cfg, domain),
+                    )
+                    run.results.append(result)
+                bench.add_run(run)
+
+        results[query_type] = (bench, all_qrels)
+
+    return results
+
+
+def _degradation_rows(
+    type_results: dict[str, tuple[RetrievalBench, dict[str, set[str]]]],
+) -> list[dict]:
+    """Build a per-config degradation table: single_hop nDCG vs multi_hop nDCG.
+
+    Also computes bridge-recall@10 for multi_hop queries (both soft and strict).
+    """
+    single_bench, single_qrels = type_results["single_hop"]
+    multi_bench, multi_qrels = type_results["multi_hop"]
+    temporal_bench, temporal_qrels = type_results["temporal"]
+
+    def avg_ndcg(bench: RetrievalBench, qrels: dict) -> dict[str, float]:
+        per_cfg: dict[str, list[float]] = {}
+        for run in bench.runs:
+            metrics = evaluate_run(run, qrels, k=10)
+            per_cfg.setdefault(metrics["config"], []).append(metrics["ndcg@k"])
+        return {cfg: sum(v) / len(v) for cfg, v in per_cfg.items()}
+
+    def avg_bridge_recall(bench: RetrievalBench, qrels: dict) -> dict[str, tuple[float, float]]:
+        """Returns (soft_bridge_recall, strict_bridge_recall) per config."""
+        per_cfg: dict[str, list[tuple[float, float]]] = {}
+        for run in bench.runs:
+            for result in run.results:
+                bridge_ids = qrels.get(result.query_id, set())
+                soft = bridge_recall_at_k(result.retrieved_ids, bridge_ids, k=10)
+                strict = bridge_recall_strict_at_k(result.retrieved_ids, bridge_ids, k=10)
+                cfg_name = run.config.name()
+                per_cfg.setdefault(cfg_name, []).append((soft, strict))
+        return {
+            cfg: (
+                sum(s for s, _ in pairs) / len(pairs),
+                sum(st for _, st in pairs) / len(pairs),
+            )
+            for cfg, pairs in per_cfg.items()
+        }
+
+    single_ndcg = avg_ndcg(single_bench, single_qrels)
+    multi_ndcg = avg_ndcg(multi_bench, multi_qrels)
+    temporal_ndcg = avg_ndcg(temporal_bench, temporal_qrels)
+    bridge_recalls = avg_bridge_recall(multi_bench, multi_qrels)
+
+    rows = []
+    for cfg in single_ndcg:
+        s = single_ndcg[cfg]
+        m = multi_ndcg.get(cfg, 0.0)
+        t = temporal_ndcg.get(cfg, 0.0)
+        soft_br, strict_br = bridge_recalls.get(cfg, (0.0, 0.0))
+        rows.append({
+            "config": cfg,
+            "ndcg_single": s,
+            "ndcg_multi": m,
+            "ndcg_temporal": t,
+            "multi_hop_delta": m - s,
+            "bridge_recall": soft_br,
+            "bridge_recall_strict": strict_br,
+        })
+    rows.sort(key=lambda r: r["multi_hop_delta"])
+    return rows
+
+
 def _domain_summary_rows(rows: list[dict]) -> list[dict]:
     summary = []
     for domain in BENCHMARK_DOMAINS:
@@ -307,6 +422,36 @@ def main() -> None:
     least_biased = bias_rows[-1]
     print(f"\nMost position-biased:  {most_biased['config']} (gap={most_biased['bias_gap']:+.4f})")
     print(f"Least position-biased: {least_biased['config']} (gap={least_biased['bias_gap']:+.4f})")
+
+    print("\n--- Multi-Hop & Temporal Degradation Leaderboard ---")
+    print("(sorted by multi_hop_delta ascending = worst degradation first)")
+    type_results = _run_query_type_ablation()
+    deg_rows = _degradation_rows(type_results)
+    print(
+        _format_table(
+            deg_rows,
+            [
+                "config",
+                "ndcg_single",
+                "ndcg_multi",
+                "ndcg_temporal",
+                "multi_hop_delta",
+                "bridge_recall",
+                "bridge_recall_strict",
+            ],
+        )
+    )
+    worst = deg_rows[0]
+    best = deg_rows[-1]
+    print(
+        f"\nMost degraded on multi-hop: {worst['config']} "
+        f"(delta={worst['multi_hop_delta']:+.4f}, bridge_recall={worst['bridge_recall']:.4f})"
+    )
+    print(
+        f"Most robust on multi-hop:   {best['config']} "
+        f"(delta={best['multi_hop_delta']:+.4f}, bridge_recall={best['bridge_recall']:.4f})"
+    )
+
 
     print("\n--- Cost-Latency-Quality Leaderboard (Finance, averaged across configs) ---")
     finance_rows = [row for row in rows if row["domain"] == Domain.FINANCE.value]
