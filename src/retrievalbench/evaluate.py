@@ -93,6 +93,84 @@ def r_precision(retrieved_ids: list[str], relevant_ids: set[str]) -> float:
     return hits / r
 
 
+def nugget_recall_at_k(
+    retrieved_ids: list[str],
+    nugget_ids: set[str],
+    k: int,
+) -> float:
+    """Fraction of nuggets (atomic fact units) retrieved in top-k.
+
+    Nugget-recall captures what NDCG misses: a retriever may rank many
+    peripherally-relevant chunks highly (boosting NDCG) while missing the
+    specific document that contains the key claim. Inspired by the TREC
+    2024/2025 RAG Track nugget evaluation (arXiv:2504.15068).
+
+    A meaningful gap between nugget_recall and NDCG identifies retrievers
+    that surface relevant-but-uninformative chunks.
+    """
+    if not nugget_ids:
+        return 0.0
+    retrieved_k = set(retrieved_ids[:k])
+    return len(retrieved_k & nugget_ids) / len(nugget_ids)
+
+
+def position_bias_audit(
+    runs: list,
+    corpus: list[dict],
+    qrels: dict[str, set[str]],
+    k: int = 10,
+) -> dict[str, dict[str, float]]:
+    """Measure recall@k degradation caused by primacy/position bias.
+
+    Splits queries into three tiers based on where their relevant documents
+    appear in the corpus (early / mid / late), then computes recall@k per
+    tier per config. A large early-vs-late gap signals strong position bias.
+
+    Args:
+        runs: List of BenchmarkRun objects.
+        corpus: Document corpus with 'corpus_position' field (0-1 float).
+        qrels: Standard qrels mapping query_id -> set of relevant doc_ids.
+        k: Rank cutoff.
+
+    Returns:
+        Dict mapping config_name -> {"early": float, "mid": float, "late": float,
+        "bias_gap": float} where bias_gap = early_recall - late_recall.
+    """
+    doc_pos = {d["doc_id"]: d.get("corpus_position", 0.0) for d in corpus}
+
+    def _tier(relevant_ids: set[str]) -> str:
+        if not relevant_ids:
+            return "mid"
+        avg_pos = sum(doc_pos.get(d, 0.5) for d in relevant_ids) / len(relevant_ids)
+        if avg_pos < 0.33:
+            return "early"
+        if avg_pos < 0.67:
+            return "mid"
+        return "late"
+
+    cfg_tier_recalls: dict[str, dict[str, list[float]]] = {}
+    for run in runs:
+        cfg = run.config.name()
+        cfg_tier_recalls.setdefault(cfg, {"early": [], "mid": [], "late": []})
+        for result in run.results:
+            rel = qrels.get(result.query_id, set())
+            tier = _tier(rel)
+            cfg_tier_recalls[cfg][tier].append(recall_at_k(result.retrieved_ids, rel, k))
+
+    output: dict[str, dict[str, float]] = {}
+    for cfg, tiers in cfg_tier_recalls.items():
+        early = sum(tiers["early"]) / len(tiers["early"]) if tiers["early"] else 0.0
+        mid = sum(tiers["mid"]) / len(tiers["mid"]) if tiers["mid"] else 0.0
+        late = sum(tiers["late"]) / len(tiers["late"]) if tiers["late"] else 0.0
+        output[cfg] = {
+            "early": round(early, 4),
+            "mid": round(mid, 4),
+            "late": round(late, 4),
+            "bias_gap": round(early - late, 4),
+        }
+    return output
+
+
 def latency_adjusted_ndcg(
     retrieved_ids: list[str],
     relevant_ids: set[str],

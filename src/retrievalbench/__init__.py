@@ -1,4 +1,5 @@
 """RetrievalBench: RAG configuration benchmarking toolkit."""
+from .data import make_corpus, make_nuggets, make_queries, make_retrieval_result
 from .core import (
     Domain,
     CHUNKING_STRATEGIES,
@@ -11,6 +12,8 @@ from .core import (
     RetrievalBench,
 )
 from .evaluate import (
+    nugget_recall_at_k,
+    position_bias_audit,
     recall_at_k,
     precision_at_k,
     f1_at_k,
@@ -64,6 +67,12 @@ __all__ = [
     "RetrievalResult",
     "BenchmarkRun",
     "RetrievalBench",
+    "nugget_recall_at_k",
+    "position_bias_audit",
+    "make_corpus",
+    "make_nuggets",
+    "make_queries",
+    "make_retrieval_result",
     "recall_at_k",
     "precision_at_k",
     "f1_at_k",
