@@ -17,11 +17,19 @@ from retrievalbench.evaluate import (
     bridge_recall_at_k,
     bridge_recall_strict_at_k,
     evaluate_run,
+    ndcg_at_k,
     nugget_recall_at_k,
     position_bias_audit,
 )
 from retrievalbench.data import make_nuggets
-from retrievalbench.cost import build_leaderboard, leaderboard_rows
+from retrievalbench.cost import (
+    OperatingPoint,
+    build_leaderboard,
+    estimate_cost,
+    estimate_latency,
+    leaderboard_rows,
+    pareto_frontier,
+)
 from retrievalbench.scheduling import (
     AdaptiveRetrievalScheduler,
     CPU_ONLY,
@@ -44,6 +52,8 @@ BENCHMARK_DOMAINS = (
     Domain.LEGAL,
     Domain.MEDICAL,
     Domain.TECHNICAL,
+    Domain.SCIENTIFIC,
+    Domain.NEWS,
 )
 
 CONFIGS = (
@@ -84,6 +94,8 @@ def _config_recall(cfg: RAGConfig, domain: Domain) -> float:
         Domain.LEGAL: 0.54,
         Domain.MEDICAL: 0.52,
         Domain.TECHNICAL: 0.56,
+        Domain.SCIENTIFIC: 0.53,
+        Domain.NEWS: 0.60,
     }[domain]
     chunk_bonus = {
         "fixed_512": 0.00,
@@ -96,12 +108,16 @@ def _config_recall(cfg: RAGConfig, domain: Domain) -> float:
         Domain.LEGAL: 0.10,
         Domain.MEDICAL: 0.12,
         Domain.TECHNICAL: 0.07,
+        Domain.SCIENTIFIC: 0.09,  # structured metadata (journal, year) helps
+        Domain.NEWS: 0.05,        # news metadata less discriminative
     }[domain]
     query_expansion_bonus = {
         Domain.FINANCE: 0.10,
         Domain.LEGAL: 0.08,
         Domain.MEDICAL: -0.05,
         Domain.TECHNICAL: 0.09,
+        Domain.SCIENTIFIC: 0.06,  # synonym expansion helps for jargon-heavy queries
+        Domain.NEWS: 0.12,        # news benefits most from query expansion
     }[domain]
 
     recall = domain_base + chunk_bonus
@@ -120,6 +136,8 @@ def _config_relevance_bias(cfg: RAGConfig, domain: Domain) -> float:
         Domain.LEGAL: 0.03,
         Domain.MEDICAL: -0.03,
         Domain.TECHNICAL: 0.04,
+        Domain.SCIENTIFIC: 0.03,
+        Domain.NEWS: 0.05,
     }[domain]
 
     bias = 0.04
@@ -132,6 +150,60 @@ def _config_relevance_bias(cfg: RAGConfig, domain: Domain) -> float:
     if cfg.use_query_expansion:
         bias += query_expansion_bonus
     return max(0.0, min(0.50, bias))
+
+
+# ---------------------------------------------------------------------------
+# Baseline systems: BM25, Dense, Hybrid, Reranked
+# Each entry: (system_name, recall, relevance_bias, use_reranking, use_qexp, base_latency_ms)
+# ---------------------------------------------------------------------------
+_BASELINE_SYSTEMS = [
+    # name,            recall, bias,  rerank, qexp,  base_latency_ms
+    ("BM25",           0.52,   0.01,  False,  False, 20.0),
+    ("Dense-E5",       0.65,   0.18,  False,  False, 55.0),
+    ("Dense-BGE",      0.67,   0.20,  False,  False, 58.0),
+    ("Hybrid-RRF",     0.70,   0.22,  False,  False, 65.0),
+    ("Reranked-BGE",   0.72,   0.35,  True,   False, 58.0),
+    ("Reranked+QExp",  0.75,   0.37,  True,   True,  58.0),
+]
+
+
+def _build_baseline_leaderboard(
+    corpus: list[dict],
+    qrels: dict[str, set[str]],
+    domain: Domain,
+) -> list[OperatingPoint]:
+    """Run each baseline system over the given domain's queries and build Pareto frontier."""
+    domain_qrels = {
+        qid: rel for qid, rel in qrels.items() if qid.startswith(domain.value)
+    }
+    domain_docs = [d for d in corpus if d["domain"] == domain.value]
+
+    points = []
+    for name, recall, bias, use_rerank, use_qexp, base_lat in _BASELINE_SYSTEMS:
+        ndcg_scores = []
+        for qid, relevant_ids in domain_qrels.items():
+            result = make_retrieval_result(
+                qid,
+                domain_docs if domain_docs else corpus,
+                relevant_ids,
+                recall=recall,
+                seed_salt=f"{domain.value}:{name}",
+                relevance_bias=bias,
+            )
+            ndcg_scores.append(ndcg_at_k(result.retrieved_ids, relevant_ids, k=10))
+        avg_ndcg = sum(ndcg_scores) / len(ndcg_scores) if ndcg_scores else 0.0
+        latency = estimate_latency(base_lat, use_reranking=use_rerank, use_query_expansion=use_qexp)
+        cost = estimate_cost(use_reranking=use_rerank, use_query_expansion=use_qexp)
+        points.append(OperatingPoint(
+            system=name,
+            ndcg=avg_ndcg,
+            latency_ms=latency,
+            cost_per_query_usd=cost,
+        ))
+
+    points = pareto_frontier(points)
+    points.sort(key=lambda p: p.ndcg, reverse=True)
+    return points
 
 
 def _position_penalty_for_chunking(chunking_strategy: str) -> float:
@@ -372,11 +444,44 @@ def main() -> None:
         )
     )
 
-    print("\n--- 4-Domain Comparison ---")
+    print("\n--- 6-Domain Comparison ---")
     print(
         _format_table(
             _domain_summary_rows(rows),
             ["domain", "best_config", "ndcg@10", "mrr", "n_queries"],
+        )
+    )
+
+    print("\n--- Baseline System Leaderboard (BM25 / Dense / Hybrid / Reranked) ---")
+    print("Finance domain — cost-latency-quality Pareto frontier")
+    baseline_points = _build_baseline_leaderboard(corpus, qrels, Domain.FINANCE)
+    print(
+        _format_table(
+            leaderboard_rows(baseline_points),
+            ["system", "ndcg@10", "latency_ms", "cost_per_1k_usd", "pareto_optimal"],
+        )
+    )
+    pareto = [p.system for p in baseline_points if p.pareto_optimal]
+    print(f"\nPareto-optimal: {', '.join(pareto)}")
+
+    print("\n--- Baseline Leaderboard Across All 6 Domains ---")
+    all_baseline_rows = []
+    for domain in BENCHMARK_DOMAINS:
+        pts = _build_baseline_leaderboard(corpus, qrels, domain)
+        best = pts[0]
+        pareto_count = sum(1 for p in pts if p.pareto_optimal)
+        all_baseline_rows.append({
+            "domain": domain.value,
+            "best_system": best.system,
+            "ndcg@10": best.ndcg,
+            "latency_ms": best.latency_ms,
+            "cost_per_1k_usd": best.cost_per_1k_usd,
+            "pareto_systems": str(pareto_count),
+        })
+    print(
+        _format_table(
+            all_baseline_rows,
+            ["domain", "best_system", "ndcg@10", "latency_ms", "cost_per_1k_usd", "pareto_systems"],
         )
     )
 
@@ -387,7 +492,6 @@ def main() -> None:
     for run in bench.runs:
         if run.domain.value != "finance":
             continue
-        from retrievalbench.evaluate import ndcg_at_k
         ndcg_scores, nugget_scores = [], []
         for result in run.results:
             rel = qrels.get(result.query_id, set())
