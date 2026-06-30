@@ -126,6 +126,7 @@ def make_corpus(
                 "text": " ".join(sentences),
                 "domain": domain.value,
                 "word_count": sum(len(s.split()) for s in sentences),
+                "corpus_position": i / max(n_docs - 1, 1),
             }
         )
     return corpus
@@ -230,6 +231,35 @@ def _domains_available_in_corpus(
     return domain_choices
 
 
+def make_nuggets(
+    qrels: dict[str, set[str]],
+    seed: int = 42,
+    nugget_fraction: float = 0.5,
+) -> dict[str, set[str]]:
+    """Designate a subset of each query's relevant docs as nuggets.
+
+    Nuggets represent atomic fact units — the specific documents that contain
+    the key claim needed to answer the query. A retriever may score high on
+    NDCG (retrieving many peripheral relevant docs) while missing nuggets.
+
+    Args:
+        qrels: Standard qrels mapping query_id -> set of relevant doc_ids.
+        seed: Random seed for reproducibility.
+        nugget_fraction: Fraction of relevant docs to designate as nuggets.
+            At least one nugget is always assigned per query.
+
+    Returns:
+        nuggets dict mapping query_id -> set of nugget doc_ids (subset of qrels).
+    """
+    rng = random.Random(seed)
+    nuggets: dict[str, set[str]] = {}
+    for query_id, relevant_ids in qrels.items():
+        rel_list = sorted(relevant_ids)
+        n_nuggets = max(1, round(len(rel_list) * nugget_fraction))
+        nuggets[query_id] = set(rng.sample(rel_list, min(n_nuggets, len(rel_list))))
+    return nuggets
+
+
 def make_retrieval_result(
     query_id: str,
     corpus: list[dict],
@@ -237,10 +267,12 @@ def make_retrieval_result(
     recall: float = 0.7,
     seed_salt: str = "",
     relevance_bias: float = 0.0,
+    position_penalty_scale: float = 0.0,
 ) -> RetrievalResult:
     seed_material = f"{query_id}:{seed_salt}:{recall:.4f}"
     seed = int.from_bytes(hashlib.sha256(seed_material.encode("utf-8")).digest()[:8], "big")
     rng = random.Random(seed)
+    doc_position = {d["doc_id"]: d.get("corpus_position", 0.0) for d in corpus}
     all_ids = [d["doc_id"] for d in corpus]
     non_relevant = [d for d in all_ids if d not in relevant_ids]
     n_rel_include = max(1, round(len(relevant_ids) * recall))
@@ -248,13 +280,15 @@ def make_retrieval_result(
     filler = rng.sample(non_relevant, min(10 - len(included_rel), len(non_relevant)))
     candidates = included_rel + filler
     bias = max(0.0, min(1.0, relevance_bias))
-    scored = [
-        (
-            doc_id,
-            min(1.0, rng.random() + (bias if doc_id in relevant_ids else 0.0)),
-        )
-        for doc_id in candidates
-    ]
+    scale = max(0.0, position_penalty_scale)
+    scored = []
+    for doc_id in candidates:
+        base_score = rng.random() + (bias if doc_id in relevant_ids else 0.0)
+        if scale > 0.0 and doc_id in relevant_ids:
+            # Primacy bias: late-positioned relevant docs score lower
+            penalty = scale * doc_position.get(doc_id, 0.0)
+            base_score -= penalty
+        scored.append((doc_id, min(1.0, base_score)))
     scored.sort(key=lambda pair: pair[1], reverse=True)
     retrieved = [doc_id for doc_id, _ in scored[:10]]
     scores = [score for _, score in scored[:10]]

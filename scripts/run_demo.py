@@ -13,7 +13,14 @@ from retrievalbench.core import (
     RetrievalBench,
 )
 from retrievalbench.data import make_corpus, make_queries, make_retrieval_result
-from retrievalbench.evaluate import bridge_recall_at_k, bridge_recall_strict_at_k, evaluate_run
+from retrievalbench.evaluate import (
+    bridge_recall_at_k,
+    bridge_recall_strict_at_k,
+    evaluate_run,
+    nugget_recall_at_k,
+    position_bias_audit,
+)
+from retrievalbench.data import make_nuggets
 from retrievalbench.cost import build_leaderboard, leaderboard_rows
 from retrievalbench.scheduling import (
     AdaptiveRetrievalScheduler,
@@ -127,7 +134,17 @@ def _config_relevance_bias(cfg: RAGConfig, domain: Domain) -> float:
     return max(0.0, min(0.50, bias))
 
 
-def _run_domain_ablation() -> tuple[RetrievalBench, dict[str, set[str]]]:
+def _position_penalty_for_chunking(chunking_strategy: str) -> float:
+    """Fixed-size chunking has the strongest position bias; semantic the least."""
+    return {
+        "fixed_512": 0.30,
+        "sentence": 0.18,
+        "recursive": 0.12,
+        "semantic": 0.05,
+    }[chunking_strategy]
+
+
+def _run_domain_ablation() -> tuple[RetrievalBench, dict[str, set[str]], list[dict]]:
     corpus = make_corpus(n_docs=240, seed=0, domains=BENCHMARK_DOMAINS)
     bench = RetrievalBench()
     all_qrels: dict[str, set[str]] = {}
@@ -145,6 +162,7 @@ def _run_domain_ablation() -> tuple[RetrievalBench, dict[str, set[str]]]:
         for cfg in CONFIGS:
             run = BenchmarkRun(config=cfg, domain=domain)
             recall = _config_recall(cfg, domain)
+            pos_penalty = _position_penalty_for_chunking(cfg.chunking_strategy)
             for query in queries:
                 relevant_ids = qrels.get(query["query_id"], set())
                 result = make_retrieval_result(
@@ -154,11 +172,12 @@ def _run_domain_ablation() -> tuple[RetrievalBench, dict[str, set[str]]]:
                     recall=recall,
                     seed_salt=f"{domain.value}:{cfg.name()}",
                     relevance_bias=_config_relevance_bias(cfg, domain),
+                    position_penalty_scale=pos_penalty,
                 )
                 run.results.append(result)
             bench.add_run(run)
 
-    return bench, all_qrels
+    return bench, all_qrels, corpus
 
 
 def _run_query_type_ablation() -> dict[str, tuple[RetrievalBench, dict[str, set[str]]]]:
@@ -302,7 +321,7 @@ def _domain_config_rows(rows: list[dict]) -> list[dict]:
 def main() -> None:
     print("=== RetrievalBench Demo ===")
 
-    bench, qrels = _run_domain_ablation()
+    bench, qrels, corpus = _run_domain_ablation()
     rows = [evaluate_run(run, qrels, k=10) for run in bench.runs]
     rows.sort(key=lambda row: row["ndcg@k"], reverse=True)
     finance_rows = [row for row in rows if row["domain"] == Domain.FINANCE.value]
@@ -361,6 +380,49 @@ def main() -> None:
         )
     )
 
+    print("\n--- Nugget Recall vs NDCG Divergence (Finance) ---")
+    print("(gap = NDCG - nugget_recall; positive gap = retriever ranks peripheral chunks highly)")
+    nuggets = make_nuggets(qrels, seed=99)
+    nugget_rows = []
+    for run in bench.runs:
+        if run.domain.value != "finance":
+            continue
+        from retrievalbench.evaluate import ndcg_at_k
+        ndcg_scores, nugget_scores = [], []
+        for result in run.results:
+            rel = qrels.get(result.query_id, set())
+            nug = nuggets.get(result.query_id, set())
+            ndcg_scores.append(ndcg_at_k(result.retrieved_ids, rel, k=10))
+            nugget_scores.append(nugget_recall_at_k(result.retrieved_ids, nug, k=10))
+        avg_ndcg = sum(ndcg_scores) / len(ndcg_scores) if ndcg_scores else 0.0
+        avg_nugget = sum(nugget_scores) / len(nugget_scores) if nugget_scores else 0.0
+        nugget_rows.append({
+            "config": run.config.name(),
+            "ndcg@10": avg_ndcg,
+            "nugget_recall@10": avg_nugget,
+            "gap": avg_ndcg - avg_nugget,
+        })
+    nugget_rows.sort(key=lambda r: r["gap"], reverse=True)
+    print(_format_table(nugget_rows, ["config", "ndcg@10", "nugget_recall@10", "gap"]))
+    worst_gap = nugget_rows[0]
+    print(
+        f"\nLargest gap: {worst_gap['config']} "
+        f"(NDCG={worst_gap['ndcg@10']:.4f}, nugget_recall={worst_gap['nugget_recall@10']:.4f}, gap={worst_gap['gap']:+.4f})"
+    )
+
+    print("\n--- Position Bias Audit by Chunking Strategy ---")
+    print("(bias_gap = early_recall - late_recall; larger gap = stronger position bias)")
+    bias_results = position_bias_audit(bench.runs, corpus, qrels, k=10)
+    bias_rows = [
+        {"config": cfg, **tiers}
+        for cfg, tiers in sorted(bias_results.items(), key=lambda x: -x[1]["bias_gap"])
+    ]
+    print(_format_table(bias_rows, ["config", "early", "mid", "late", "bias_gap"]))
+    most_biased = bias_rows[0]
+    least_biased = bias_rows[-1]
+    print(f"\nMost position-biased:  {most_biased['config']} (gap={most_biased['bias_gap']:+.4f})")
+    print(f"Least position-biased: {least_biased['config']} (gap={least_biased['bias_gap']:+.4f})")
+
     print("\n--- Multi-Hop & Temporal Degradation Leaderboard ---")
     print("(sorted by multi_hop_delta ascending = worst degradation first)")
     type_results = _run_query_type_ablation()
@@ -389,6 +451,7 @@ def main() -> None:
         f"Most robust on multi-hop:   {best['config']} "
         f"(delta={best['multi_hop_delta']:+.4f}, bridge_recall={best['bridge_recall']:.4f})"
     )
+
 
     print("\n--- Cost-Latency-Quality Leaderboard (Finance, averaged across configs) ---")
     finance_rows = [row for row in rows if row["domain"] == Domain.FINANCE.value]
