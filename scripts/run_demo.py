@@ -17,11 +17,19 @@ from retrievalbench.evaluate import (
     bridge_recall_at_k,
     bridge_recall_strict_at_k,
     evaluate_run,
+    ndcg_at_k,
     nugget_recall_at_k,
     position_bias_audit,
 )
 from retrievalbench.data import make_nuggets
-from retrievalbench.cost import build_leaderboard, leaderboard_rows
+from retrievalbench.cost import (
+    OperatingPoint,
+    build_leaderboard,
+    estimate_cost,
+    estimate_latency,
+    leaderboard_rows,
+    pareto_frontier,
+)
 from retrievalbench.scheduling import (
     AdaptiveRetrievalScheduler,
     CPU_ONLY,
@@ -147,10 +155,7 @@ def _config_relevance_bias(cfg: RAGConfig, domain: Domain) -> float:
 # ---------------------------------------------------------------------------
 # Baseline systems: BM25, Dense, Hybrid, Reranked
 # Each entry: (system_name, recall, relevance_bias, use_reranking, use_qexp, base_latency_ms)
-# Costs are estimated via estimate_cost(); latency via estimate_latency().
 # ---------------------------------------------------------------------------
-from retrievalbench.cost import OperatingPoint, estimate_cost, estimate_latency, pareto_frontier
-
 _BASELINE_SYSTEMS = [
     # name,            recall, bias,  rerank, qexp,  base_latency_ms
     ("BM25",           0.52,   0.01,  False,  False, 20.0),
@@ -168,8 +173,6 @@ def _build_baseline_leaderboard(
     domain: Domain,
 ) -> list[OperatingPoint]:
     """Run each baseline system over the given domain's queries and build Pareto frontier."""
-    from retrievalbench.evaluate import ndcg_at_k
-
     domain_qrels = {
         qid: rel for qid, rel in qrels.items() if qid.startswith(domain.value)
     }
@@ -452,10 +455,9 @@ def main() -> None:
     print("\n--- Baseline System Leaderboard (BM25 / Dense / Hybrid / Reranked) ---")
     print("Finance domain — cost-latency-quality Pareto frontier")
     baseline_points = _build_baseline_leaderboard(corpus, qrels, Domain.FINANCE)
-    from retrievalbench.cost import leaderboard_rows as lb_rows
     print(
         _format_table(
-            lb_rows(baseline_points),
+            leaderboard_rows(baseline_points),
             ["system", "ndcg@10", "latency_ms", "cost_per_1k_usd", "pareto_optimal"],
         )
     )
@@ -490,7 +492,6 @@ def main() -> None:
     for run in bench.runs:
         if run.domain.value != "finance":
             continue
-        from retrievalbench.evaluate import ndcg_at_k
         ndcg_scores, nugget_scores = [], []
         for result in run.results:
             rel = qrels.get(result.query_id, set())
