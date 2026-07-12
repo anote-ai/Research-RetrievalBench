@@ -1,9 +1,109 @@
 {
   "domain": "medical",
   "dataset": "nfcorpus",
-  "date": "2026-07-12T19:44:11",
+  "date": "2026-07-12T22:42:09",
   "n_docs": 3633,
   "n_queries": 323,
+  "total_embed_tokens": 6233185,
+  "total_embed_cost_usd": 0.124664,
+  "position_bias": {
+    "fixed_512/BM25": {
+      "early": 0.1608,
+      "mid": 0.108,
+      "late": 0.1354,
+      "bias_gap": 0.0254
+    },
+    "fixed_512/BM25+Rerank": {
+      "early": 0.1608,
+      "mid": 0.108,
+      "late": 0.1354,
+      "bias_gap": 0.0254
+    },
+    "fixed_512/Dense-OpenAI": {
+      "early": 0.2194,
+      "mid": 0.1435,
+      "late": 0.2222,
+      "bias_gap": -0.0028
+    },
+    "fixed_512/Dense-OpenAI+Rerank": {
+      "early": 0.2194,
+      "mid": 0.1435,
+      "late": 0.2222,
+      "bias_gap": -0.0028
+    },
+    "sentence/BM25": {
+      "early": 0.1275,
+      "mid": 0.1013,
+      "late": 0.1372,
+      "bias_gap": -0.0097
+    },
+    "sentence/BM25+Rerank": {
+      "early": 0.1275,
+      "mid": 0.1013,
+      "late": 0.1372,
+      "bias_gap": -0.0097
+    },
+    "sentence/Dense-OpenAI": {
+      "early": 0.2249,
+      "mid": 0.1448,
+      "late": 0.2224,
+      "bias_gap": 0.0025
+    },
+    "sentence/Dense-OpenAI+Rerank": {
+      "early": 0.2249,
+      "mid": 0.1448,
+      "late": 0.2224,
+      "bias_gap": 0.0025
+    },
+    "recursive/BM25": {
+      "early": 0.1608,
+      "mid": 0.1073,
+      "late": 0.1352,
+      "bias_gap": 0.0256
+    },
+    "recursive/BM25+Rerank": {
+      "early": 0.1608,
+      "mid": 0.1073,
+      "late": 0.1352,
+      "bias_gap": 0.0256
+    },
+    "recursive/Dense-OpenAI": {
+      "early": 0.2183,
+      "mid": 0.1397,
+      "late": 0.2219,
+      "bias_gap": -0.0036
+    },
+    "recursive/Dense-OpenAI+Rerank": {
+      "early": 0.2183,
+      "mid": 0.1397,
+      "late": 0.2219,
+      "bias_gap": -0.0036
+    },
+    "semantic/BM25": {
+      "early": 0.1208,
+      "mid": 0.0989,
+      "late": 0.1246,
+      "bias_gap": -0.0038
+    },
+    "semantic/BM25+Rerank": {
+      "early": 0.1208,
+      "mid": 0.0989,
+      "late": 0.1246,
+      "bias_gap": -0.0038
+    },
+    "semantic/Dense-OpenAI": {
+      "early": 0.2187,
+      "mid": 0.146,
+      "late": 0.2125,
+      "bias_gap": 0.0062
+    },
+    "semantic/Dense-OpenAI+Rerank": {
+      "early": 0.2187,
+      "mid": 0.146,
+      "late": 0.2125,
+      "bias_gap": 0.0062
+    }
+  },
   "results": [
     {
       "domain": "medical",
@@ -13,11 +113,12 @@
       "ndcg@10": 0.2681,
       "ndcg@10_ci_lower": 0.2349,
       "ndcg@10_ci_upper": 0.3018,
+      "la_ndcg@10": 0.2681,
       "recall@10": 0.1241,
       "mrr": 0.4695,
       "map": 0.0965,
       "n_queries": 323,
-      "latency_ms": 1.9
+      "latency_ms": 1.92
     },
     {
       "domain": "medical",
@@ -27,39 +128,52 @@
       "ndcg@10": 0.2858,
       "ndcg@10_ci_lower": 0.2522,
       "ndcg@10_ci_upper": 0.3177,
+      "la_ndcg@10": 0.2858,
       "recall@10": 0.1241,
       "mrr": 0.5379,
       "map": 0.1058,
       "n_queries": 323,
-      "latency_ms": 154.96
+      "latency_ms": 152.04,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "medical",
       "dataset": "nfcorpus",
       "chunking": "fixed_512",
       "system": "Dense-OpenAI",
-      "ndcg@10": 0.3856,
-      "ndcg@10_ci_lower": 0.3475,
-      "ndcg@10_ci_upper": 0.4223,
+      "ndcg@10": 0.3854,
+      "ndcg@10_ci_lower": 0.3469,
+      "ndcg@10_ci_upper": 0.4219,
+      "la_ndcg@10": 0.3854,
       "recall@10": 0.1838,
-      "mrr": 0.5912,
+      "mrr": 0.5899,
       "map": 0.1464,
       "n_queries": 323,
-      "latency_ms": 0.06
+      "latency_ms": 0.06,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.3716,
+      "embed_tokens": 1246081,
+      "embed_cost_usd": 0.024922,
+      "cost_per_1k_queries_usd": 0.0772
     },
     {
       "domain": "medical",
       "dataset": "nfcorpus",
       "chunking": "fixed_512",
       "system": "Dense-OpenAI+Rerank",
-      "ndcg@10": 0.3801,
+      "ndcg@10": 0.3797,
       "ndcg@10_ci_lower": 0.3399,
-      "ndcg@10_ci_upper": 0.4171,
+      "ndcg@10_ci_upper": 0.4161,
+      "la_ndcg@10": 0.3797,
       "recall@10": 0.1838,
-      "mrr": 0.5857,
-      "map": 0.1425,
+      "mrr": 0.5836,
+      "map": 0.1424,
       "n_queries": 323,
-      "latency_ms": 152.75
+      "latency_ms": 152.46,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "medical",
@@ -69,11 +183,12 @@
       "ndcg@10": 0.2585,
       "ndcg@10_ci_lower": 0.2244,
       "ndcg@10_ci_upper": 0.2926,
+      "la_ndcg@10": 0.2585,
       "recall@10": 0.119,
       "mrr": 0.4559,
       "map": 0.0938,
       "n_queries": 323,
-      "latency_ms": 7.23
+      "latency_ms": 7.36
     },
     {
       "domain": "medical",
@@ -83,39 +198,52 @@
       "ndcg@10": 0.2736,
       "ndcg@10_ci_lower": 0.2394,
       "ndcg@10_ci_upper": 0.3068,
+      "la_ndcg@10": 0.2736,
       "recall@10": 0.119,
       "mrr": 0.5144,
       "map": 0.1021,
       "n_queries": 323,
-      "latency_ms": 156.02
+      "latency_ms": 155.21,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "medical",
       "dataset": "nfcorpus",
       "chunking": "sentence",
       "system": "Dense-OpenAI",
-      "ndcg@10": 0.3837,
+      "ndcg@10": 0.3835,
       "ndcg@10_ci_lower": 0.345,
-      "ndcg@10_ci_upper": 0.4201,
-      "recall@10": 0.1846,
-      "mrr": 0.5965,
+      "ndcg@10_ci_upper": 0.42,
+      "la_ndcg@10": 0.3835,
+      "recall@10": 0.1849,
+      "mrr": 0.595,
       "map": 0.1445,
       "n_queries": 323,
-      "latency_ms": 0.13
+      "latency_ms": 0.13,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.4006,
+      "embed_tokens": 1246153,
+      "embed_cost_usd": 0.024923,
+      "cost_per_1k_queries_usd": 0.0772
     },
     {
       "domain": "medical",
       "dataset": "nfcorpus",
       "chunking": "sentence",
       "system": "Dense-OpenAI+Rerank",
-      "ndcg@10": 0.3806,
-      "ndcg@10_ci_lower": 0.343,
-      "ndcg@10_ci_upper": 0.4166,
-      "recall@10": 0.1846,
-      "mrr": 0.5941,
+      "ndcg@10": 0.3804,
+      "ndcg@10_ci_lower": 0.3431,
+      "ndcg@10_ci_upper": 0.4162,
+      "la_ndcg@10": 0.3804,
+      "recall@10": 0.1849,
+      "mrr": 0.5925,
       "map": 0.1414,
       "n_queries": 323,
-      "latency_ms": 152.28
+      "latency_ms": 152.71,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "medical",
@@ -125,11 +253,12 @@
       "ndcg@10": 0.2667,
       "ndcg@10_ci_lower": 0.2343,
       "ndcg@10_ci_upper": 0.3,
+      "la_ndcg@10": 0.2667,
       "recall@10": 0.1237,
       "mrr": 0.4678,
       "map": 0.0964,
       "n_queries": 323,
-      "latency_ms": 2.21
+      "latency_ms": 2.27
     },
     {
       "domain": "medical",
@@ -139,11 +268,14 @@
       "ndcg@10": 0.2838,
       "ndcg@10_ci_lower": 0.2498,
       "ndcg@10_ci_upper": 0.3157,
+      "la_ndcg@10": 0.2838,
       "recall@10": 0.1237,
       "mrr": 0.5322,
       "map": 0.1054,
       "n_queries": 323,
-      "latency_ms": 146.82
+      "latency_ms": 147.78,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "medical",
@@ -151,13 +283,20 @@
       "chunking": "recursive",
       "system": "Dense-OpenAI",
       "ndcg@10": 0.3817,
-      "ndcg@10_ci_lower": 0.3442,
-      "ndcg@10_ci_upper": 0.4184,
+      "ndcg@10_ci_lower": 0.344,
+      "ndcg@10_ci_upper": 0.4187,
+      "la_ndcg@10": 0.3817,
       "recall@10": 0.1816,
       "mrr": 0.5853,
-      "map": 0.1446,
+      "map": 0.1445,
       "n_queries": 323,
-      "latency_ms": 0.06
+      "latency_ms": 0.06,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.3661,
+      "embed_tokens": 1245040,
+      "embed_cost_usd": 0.024901,
+      "cost_per_1k_queries_usd": 0.0771
     },
     {
       "domain": "medical",
@@ -165,13 +304,16 @@
       "chunking": "recursive",
       "system": "Dense-OpenAI+Rerank",
       "ndcg@10": 0.3768,
-      "ndcg@10_ci_lower": 0.3384,
-      "ndcg@10_ci_upper": 0.4134,
+      "ndcg@10_ci_lower": 0.3388,
+      "ndcg@10_ci_upper": 0.4136,
+      "la_ndcg@10": 0.3768,
       "recall@10": 0.1816,
-      "mrr": 0.5816,
-      "map": 0.1406,
+      "mrr": 0.5821,
+      "map": 0.1404,
       "n_queries": 323,
-      "latency_ms": 151.65
+      "latency_ms": 150.86,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "medical",
@@ -181,11 +323,12 @@
       "ndcg@10": 0.2377,
       "ndcg@10_ci_lower": 0.2066,
       "ndcg@10_ci_upper": 0.268,
+      "la_ndcg@10": 0.2377,
       "recall@10": 0.1118,
       "mrr": 0.4162,
       "map": 0.0846,
       "n_queries": 323,
-      "latency_ms": 17.74
+      "latency_ms": 16.61
     },
     {
       "domain": "medical",
@@ -195,39 +338,52 @@
       "ndcg@10": 0.2652,
       "ndcg@10_ci_lower": 0.2329,
       "ndcg@10_ci_upper": 0.2987,
+      "la_ndcg@10": 0.2652,
       "recall@10": 0.1118,
       "mrr": 0.5094,
       "map": 0.0987,
       "n_queries": 323,
-      "latency_ms": 160.45
+      "latency_ms": 156.08,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "medical",
       "dataset": "nfcorpus",
       "chunking": "semantic",
       "system": "Dense-OpenAI",
-      "ndcg@10": 0.371,
-      "ndcg@10_ci_lower": 0.3347,
-      "ndcg@10_ci_upper": 0.4064,
-      "recall@10": 0.1806,
-      "mrr": 0.5879,
-      "map": 0.1389,
+      "ndcg@10": 0.3712,
+      "ndcg@10_ci_lower": 0.3348,
+      "ndcg@10_ci_upper": 0.4068,
+      "la_ndcg@10": 0.3712,
+      "recall@10": 0.1807,
+      "mrr": 0.5874,
+      "map": 0.1391,
       "n_queries": 323,
-      "latency_ms": 0.25
+      "latency_ms": 0.25,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.4472,
+      "embed_tokens": 2495911,
+      "embed_cost_usd": 0.049918,
+      "cost_per_1k_queries_usd": 0.1545
     },
     {
       "domain": "medical",
       "dataset": "nfcorpus",
       "chunking": "semantic",
       "system": "Dense-OpenAI+Rerank",
-      "ndcg@10": 0.3734,
-      "ndcg@10_ci_lower": 0.3364,
-      "ndcg@10_ci_upper": 0.4084,
-      "recall@10": 0.1806,
-      "mrr": 0.5921,
-      "map": 0.1409,
+      "ndcg@10": 0.3739,
+      "ndcg@10_ci_lower": 0.337,
+      "ndcg@10_ci_upper": 0.4092,
+      "la_ndcg@10": 0.3739,
+      "recall@10": 0.1807,
+      "mrr": 0.5941,
+      "map": 0.1412,
       "n_queries": 323,
-      "latency_ms": 150.92
+      "latency_ms": 150.27,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     }
   ]
 }

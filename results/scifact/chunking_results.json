@@ -1,9 +1,109 @@
 {
   "domain": "scientific",
   "dataset": "scifact",
-  "date": "2026-07-09T14:30:04",
+  "date": "2026-07-12T22:21:58",
   "n_docs": 5183,
   "n_queries": 300,
+  "total_embed_tokens": 8324072,
+  "total_embed_cost_usd": 0.166481,
+  "position_bias": {
+    "fixed_512/BM25": {
+      "early": 0.6422,
+      "mid": 0.71,
+      "late": 0.7143,
+      "bias_gap": -0.0721
+    },
+    "fixed_512/BM25+Rerank": {
+      "early": 0.6422,
+      "mid": 0.71,
+      "late": 0.7143,
+      "bias_gap": -0.0721
+    },
+    "fixed_512/Dense-OpenAI": {
+      "early": 0.8165,
+      "mid": 0.8983,
+      "late": 0.8214,
+      "bias_gap": -0.0049
+    },
+    "fixed_512/Dense-OpenAI+Rerank": {
+      "early": 0.8165,
+      "mid": 0.8983,
+      "late": 0.8214,
+      "bias_gap": -0.0049
+    },
+    "sentence/BM25": {
+      "early": 0.5734,
+      "mid": 0.6811,
+      "late": 0.6205,
+      "bias_gap": -0.0471
+    },
+    "sentence/BM25+Rerank": {
+      "early": 0.5734,
+      "mid": 0.6811,
+      "late": 0.6205,
+      "bias_gap": -0.0471
+    },
+    "sentence/Dense-OpenAI": {
+      "early": 0.8211,
+      "mid": 0.9022,
+      "late": 0.8214,
+      "bias_gap": -0.0003
+    },
+    "sentence/Dense-OpenAI+Rerank": {
+      "early": 0.8211,
+      "mid": 0.9022,
+      "late": 0.8214,
+      "bias_gap": -0.0003
+    },
+    "recursive/BM25": {
+      "early": 0.6101,
+      "mid": 0.6952,
+      "late": 0.6696,
+      "bias_gap": -0.0595
+    },
+    "recursive/BM25+Rerank": {
+      "early": 0.6101,
+      "mid": 0.6952,
+      "late": 0.6696,
+      "bias_gap": -0.0595
+    },
+    "recursive/Dense-OpenAI": {
+      "early": 0.8165,
+      "mid": 0.9057,
+      "late": 0.8214,
+      "bias_gap": -0.0049
+    },
+    "recursive/Dense-OpenAI+Rerank": {
+      "early": 0.8165,
+      "mid": 0.9057,
+      "late": 0.8214,
+      "bias_gap": -0.0049
+    },
+    "semantic/BM25": {
+      "early": 0.5688,
+      "mid": 0.6346,
+      "late": 0.5491,
+      "bias_gap": 0.0197
+    },
+    "semantic/BM25+Rerank": {
+      "early": 0.5688,
+      "mid": 0.6346,
+      "late": 0.5491,
+      "bias_gap": 0.0197
+    },
+    "semantic/Dense-OpenAI": {
+      "early": 0.7798,
+      "mid": 0.856,
+      "late": 0.7857,
+      "bias_gap": -0.0059
+    },
+    "semantic/Dense-OpenAI+Rerank": {
+      "early": 0.7798,
+      "mid": 0.856,
+      "late": 0.7857,
+      "bias_gap": -0.0059
+    }
+  },
   "results": [
     {
       "domain": "scientific",
@@ -13,11 +113,12 @@
       "ndcg@10": 0.5602,
       "ndcg@10_ci_lower": 0.5099,
       "ndcg@10_ci_upper": 0.6071,
+      "la_ndcg@10": 0.5602,
       "recall@10": 0.6862,
       "mrr": 0.525,
       "map": 0.5155,
       "n_queries": 300,
-      "latency_ms": 8.96
+      "latency_ms": 8.84
     },
     {
       "domain": "scientific",
@@ -27,11 +128,14 @@
       "ndcg@10": 0.6164,
       "ndcg@10_ci_lower": 0.5635,
       "ndcg@10_ci_upper": 0.6626,
+      "la_ndcg@10": 0.6164,
       "recall@10": 0.6862,
       "mrr": 0.6037,
       "map": 0.5873,
       "n_queries": 300,
-      "latency_ms": 163.73
+      "latency_ms": 162.83,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "scientific",
@@ -41,11 +145,18 @@
       "ndcg@10": 0.7293,
       "ndcg@10_ci_lower": 0.6872,
       "ndcg@10_ci_upper": 0.7682,
+      "la_ndcg@10": 0.7293,
       "recall@10": 0.8542,
       "mrr": 0.697,
       "map": 0.6838,
       "n_queries": 300,
-      "latency_ms": 0.08
+      "latency_ms": 0.08,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.4233,
+      "embed_tokens": 1667118,
+      "embed_cost_usd": 0.033342,
+      "cost_per_1k_queries_usd": 0.1111
     },
     {
       "domain": "scientific",
@@ -55,11 +166,14 @@
       "ndcg@10": 0.7194,
       "ndcg@10_ci_lower": 0.6768,
       "ndcg@10_ci_upper": 0.7595,
+      "la_ndcg@10": 0.7194,
       "recall@10": 0.8542,
       "mrr": 0.6835,
       "map": 0.6701,
       "n_queries": 300,
-      "latency_ms": 148.95
+      "latency_ms": 149.28,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "scientific",
@@ -69,11 +183,12 @@
       "ndcg@10": 0.5115,
       "ndcg@10_ci_lower": 0.4606,
       "ndcg@10_ci_upper": 0.5594,
+      "la_ndcg@10": 0.5115,
       "recall@10": 0.6307,
       "mrr": 0.4792,
       "map": 0.4687,
       "n_queries": 300,
-      "latency_ms": 30.43
+      "latency_ms": 31.81
     },
     {
       "domain": "scientific",
@@ -83,11 +198,14 @@
       "ndcg@10": 0.5717,
       "ndcg@10_ci_lower": 0.5209,
       "ndcg@10_ci_upper": 0.6203,
+      "la_ndcg@10": 0.5717,
       "recall@10": 0.6307,
       "mrr": 0.5633,
       "map": 0.5464,
       "n_queries": 300,
-      "latency_ms": 181.47
+      "latency_ms": 183.16,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "scientific",
@@ -97,11 +215,18 @@
       "ndcg@10": 0.7252,
       "ndcg@10_ci_lower": 0.6827,
       "ndcg@10_ci_upper": 0.7638,
+      "la_ndcg@10": 0.7252,
       "recall@10": 0.8577,
       "mrr": 0.6885,
       "map": 0.6789,
       "n_queries": 300,
-      "latency_ms": 0.15
+      "latency_ms": 0.15,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.53,
+      "embed_tokens": 1664824,
+      "embed_cost_usd": 0.033296,
+      "cost_per_1k_queries_usd": 0.111
     },
     {
       "domain": "scientific",
@@ -111,11 +236,14 @@
       "ndcg@10": 0.7212,
       "ndcg@10_ci_lower": 0.6787,
       "ndcg@10_ci_upper": 0.7603,
+      "la_ndcg@10": 0.7212,
       "recall@10": 0.8577,
       "mrr": 0.6821,
       "map": 0.6725,
       "n_queries": 300,
-      "latency_ms": 150.32
+      "latency_ms": 149.51,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "scientific",
@@ -125,11 +253,12 @@
       "ndcg@10": 0.5615,
       "ndcg@10_ci_lower": 0.5113,
       "ndcg@10_ci_upper": 0.6109,
+      "la_ndcg@10": 0.5615,
       "recall@10": 0.6595,
       "mrr": 0.5358,
       "map": 0.5248,
       "n_queries": 300,
-      "latency_ms": 12.48
+      "latency_ms": 12.86
     },
     {
       "domain": "scientific",
@@ -139,11 +268,14 @@
       "ndcg@10": 0.5973,
       "ndcg@10_ci_lower": 0.5441,
       "ndcg@10_ci_upper": 0.6483,
+      "la_ndcg@10": 0.5973,
       "recall@10": 0.6595,
       "mrr": 0.5877,
       "map": 0.5705,
       "n_queries": 300,
-      "latency_ms": 159.33
+      "latency_ms": 160.65,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "scientific",
@@ -153,11 +285,18 @@
       "ndcg@10": 0.7235,
       "ndcg@10_ci_lower": 0.6825,
       "ndcg@10_ci_upper": 0.7622,
+      "la_ndcg@10": 0.7235,
       "recall@10": 0.8576,
       "mrr": 0.6874,
       "map": 0.6755,
       "n_queries": 300,
-      "latency_ms": 0.08
+      "latency_ms": 0.08,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.4001,
+      "embed_tokens": 1663822,
+      "embed_cost_usd": 0.033276,
+      "cost_per_1k_queries_usd": 0.1109
     },
     {
       "domain": "scientific",
@@ -167,11 +306,14 @@
       "ndcg@10": 0.7202,
       "ndcg@10_ci_lower": 0.6778,
       "ndcg@10_ci_upper": 0.7598,
+      "la_ndcg@10": 0.7202,
       "recall@10": 0.8576,
       "mrr": 0.6834,
       "map": 0.6702,
       "n_queries": 300,
-      "latency_ms": 147.9
+      "latency_ms": 149.17,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "scientific",
@@ -181,11 +323,12 @@
       "ndcg@10": 0.4506,
       "ndcg@10_ci_lower": 0.4049,
       "ndcg@10_ci_upper": 0.5,
+      "la_ndcg@10": 0.4506,
       "recall@10": 0.5947,
       "mrr": 0.4116,
       "map": 0.4011,
       "n_queries": 300,
-      "latency_ms": 68.41
+      "latency_ms": 67.7
     },
     {
       "domain": "scientific",
@@ -195,25 +338,35 @@
       "ndcg@10": 0.5474,
       "ndcg@10_ci_lower": 0.496,
       "ndcg@10_ci_upper": 0.5973,
+      "la_ndcg@10": 0.5021,
       "recall@10": 0.5947,
       "mrr": 0.542,
       "map": 0.5262,
       "n_queries": 300,
-      "latency_ms": 219.38
+      "latency_ms": 217.28,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     },
     {
       "domain": "scientific",
       "dataset": "scifact",
       "chunking": "semantic",
       "system": "Dense-OpenAI",
-      "ndcg@10": 0.6901,
+      "ndcg@10": 0.69,
       "ndcg@10_ci_lower": 0.6465,
-      "ndcg@10_ci_upper": 0.7321,
+      "ndcg@10_ci_upper": 0.7319,
+      "la_ndcg@10": 0.69,
       "recall@10": 0.8152,
-      "mrr": 0.6591,
-      "map": 0.6442,
+      "mrr": 0.659,
+      "map": 0.6441,
       "n_queries": 300,
-      "latency_ms": 0.28
+      "latency_ms": 0.31,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true,
+      "cohens_d_vs_bm25": 0.5891,
+      "embed_tokens": 3328308,
+      "embed_cost_usd": 0.066566,
+      "cost_per_1k_queries_usd": 0.2219
     },
     {
       "domain": "scientific",
@@ -223,11 +376,14 @@
       "ndcg@10": 0.6979,
       "ndcg@10_ci_lower": 0.6541,
       "ndcg@10_ci_upper": 0.7391,
+      "la_ndcg@10": 0.6979,
       "recall@10": 0.8152,
       "mrr": 0.6674,
       "map": 0.6535,
       "n_queries": 300,
-      "latency_ms": 150.11
+      "latency_ms": 159.42,
+      "p_value_vs_bm25": 0.0,
+      "significant_vs_bm25": true
     }
   ]
 }
