@@ -379,7 +379,7 @@ def evaluate(
 def main() -> None:
     global _total_embed_tokens
     from sentence_transformers import CrossEncoder
-    from retrievalbench.evaluate import permutation_test, cohens_d, position_bias_audit
+    from retrievalbench.evaluate import permutation_test, cohens_d
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="scifact", choices=sorted(DATASET_DOMAINS))
