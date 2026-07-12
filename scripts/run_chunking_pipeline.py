@@ -28,6 +28,10 @@ DATASET_DOMAINS = {
 }
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBED_MODEL = "text-embedding-3-small"  # $0.02/1M tokens
+EMBED_COST_PER_TOKEN = 0.02 / 1_000_000  # USD per token
+
+# Global token counter — reset per experiment run
+_total_embed_tokens: int = 0
 
 
 def results_dir(dataset: str) -> str:
@@ -46,9 +50,15 @@ def load_beir_dataset(dataset: str, domain: str) -> tuple[list[dict], list[dict]
     queries_ds = load_dataset(f"BeIR/{dataset}", "queries", split="queries")
     qrels_ds = load_dataset(f"BeIR/{dataset}-qrels", split="test")
 
+    raw_corpus = list(corpus_ds)
+    n = len(raw_corpus)
     corpus = [
-        {"doc_id": str(r["_id"]), "text": (r["title"] + " " + r["text"]).strip()}
-        for r in corpus_ds
+        {
+            "doc_id": str(r["_id"]),
+            "text": (r["title"] + " " + r["text"]).strip(),
+            "corpus_position": i / max(n - 1, 1),
+        }
+        for i, r in enumerate(raw_corpus)
     ]
     queries = [{"query_id": str(r["_id"]), "text": r["text"]} for r in queries_ds]
 
@@ -118,16 +128,18 @@ def chunk_recursive(doc: dict, max_tokens: int = 512) -> list[dict]:
 def openai_embed(texts: list[str], batch_size: int = 500) -> list[list[float]]:
     """Embed texts using OpenAI text-embedding-3-small in batches.
     Empty strings are replaced with a single space to avoid API errors.
+    Accumulates token usage into global _total_embed_tokens for cost tracking.
     """
+    global _total_embed_tokens
     from openai import OpenAI
 
     client = OpenAI(api_key=OPENAI_API_KEY)
-    # Replace empty strings — OpenAI rejects them
     safe_texts = [t if t.strip() else " " for t in texts]
     all_embeddings = []
     for i in range(0, len(safe_texts), batch_size):
         batch = safe_texts[i: i + batch_size]
         resp = client.embeddings.create(input=batch, model=EMBED_MODEL)
+        _total_embed_tokens += resp.usage.total_tokens
         batch_embs = [d.embedding for d in sorted(resp.data, key=lambda x: x.index)]
         all_embeddings.extend(batch_embs)
     return all_embeddings
@@ -326,20 +338,23 @@ def rerank(
 def evaluate(
     retrieved: dict[str, list[str]],
     qrels: dict[str, set[str]],
+    latency_ms: float = 0.0,
     k: int = 10,
 ) -> dict:
     from retrievalbench.evaluate import (
         ndcg_at_k, recall_at_k, mean_reciprocal_rank,
-        average_precision, bootstrap_ci,
+        average_precision, bootstrap_ci, latency_adjusted_ndcg,
     )
 
-    ndcgs, recalls, mrrs, aps = [], [], [], []
+    ndcgs, recalls, mrrs, aps, la_ndcgs = [], [], [], [], []
     for qid, ret_ids in retrieved.items():
         rel = qrels.get(qid, set())
-        ndcgs.append(ndcg_at_k(ret_ids, rel, k))
+        ndcg = ndcg_at_k(ret_ids, rel, k)
+        ndcgs.append(ndcg)
         recalls.append(recall_at_k(ret_ids, rel, k))
         mrrs.append(mean_reciprocal_rank(ret_ids, rel))
         aps.append(average_precision(ret_ids, rel))
+        la_ndcgs.append(latency_adjusted_ndcg(ret_ids, rel, latency_ms, k))
 
     def mean(lst): return sum(lst) / len(lst) if lst else 0.0
     ci = bootstrap_ci(ndcgs)
@@ -348,6 +363,7 @@ def evaluate(
         "ndcg@10": round(mean(ndcgs), 4),
         "ndcg@10_ci_lower": round(ci[0], 4),
         "ndcg@10_ci_upper": round(ci[1], 4),
+        "la_ndcg@10": round(mean(la_ndcgs), 4),
         "recall@10": round(mean(recalls), 4),
         "mrr": round(mean(mrrs), 4),
         "map": round(mean(aps), 4),
@@ -361,7 +377,9 @@ def evaluate(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    global _total_embed_tokens
     from sentence_transformers import CrossEncoder
+    from retrievalbench.evaluate import permutation_test, cohens_d, position_bias_audit
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="scifact", choices=sorted(DATASET_DOMAINS))
@@ -382,10 +400,17 @@ def main() -> None:
         CHUNKING_STRATEGIES = ["fixed_512", "sentence", "recursive", "semantic"]
     all_records = []
 
+    # position_bias_audit expects BenchmarkRun-like objects; we'll collect data manually
+    # Format: {(strategy, system): {qid: [ret_ids]}} for post-hoc position bias
+    pos_bias_data: dict[str, dict[str, list[str]]] = {}
+
     for strategy in CHUNKING_STRATEGIES:
         print(f"\n{'='*60}")
         print(f"[{domain.upper()} / {dataset}] Chunking: {strategy}")
         print(f"{'='*60}")
+
+        # Reset token counter per strategy so we can track cost per chunking run
+        tokens_before = _total_embed_tokens
 
         # Build chunk corpus
         print("  Building chunk corpus...")
@@ -396,42 +421,69 @@ def main() -> None:
         # BM25
         print("  Running BM25...")
         bm25_results, bm25_lat = retrieve_bm25_chunks(chunk_corpus, queries)
-        bm25_metrics = evaluate(bm25_results, qrels)
+        bm25_metrics = evaluate(bm25_results, qrels, bm25_lat)
 
         # BM25 + Rerank
         print("  Reranking BM25 results...")
         bm25_rerank_results, rerank_lat_bm25 = rerank(bm25_results, queries, corpus, reranker)
-        bm25_rerank_metrics = evaluate(bm25_rerank_results, qrels)
+        bm25_rerank_lat = bm25_lat + rerank_lat_bm25
+        bm25_rerank_metrics = evaluate(bm25_rerank_results, qrels, bm25_rerank_lat)
 
         # Dense
         print("  Running Dense (OpenAI text-embedding-3-small)...")
         dense_results, dense_raw, dense_lat = retrieve_dense_chunks(chunk_corpus, queries)
-        dense_metrics = evaluate(dense_results, qrels)
+        dense_metrics = evaluate(dense_results, qrels, dense_lat)
 
         # Dense + Rerank
         print("  Reranking Dense results...")
         dense_rerank_results, rerank_lat_dense = rerank(dense_results, queries, corpus, reranker)
-        dense_rerank_metrics = evaluate(dense_rerank_results, qrels)
+        dense_rerank_lat = dense_lat + rerank_lat_dense
+        dense_rerank_metrics = evaluate(dense_rerank_results, qrels, dense_rerank_lat)
+
+        # Cost for this strategy's Dense runs (BM25 has no embedding cost)
+        tokens_used = _total_embed_tokens - tokens_before
+        cost_usd = tokens_used * EMBED_COST_PER_TOKEN
+        cost_per_query = cost_usd / len(queries) if queries else 0.0
+
+        # Significance tests: each system vs BM25 baseline
+        sig_bm25r = permutation_test(bm25_rerank_metrics["_ndcg_per_query"], bm25_metrics["_ndcg_per_query"])
+        sig_dense = permutation_test(dense_metrics["_ndcg_per_query"], bm25_metrics["_ndcg_per_query"])
+        sig_denser = permutation_test(dense_rerank_metrics["_ndcg_per_query"], bm25_metrics["_ndcg_per_query"])
+        cd_dense = cohens_d(dense_metrics["_ndcg_per_query"], bm25_metrics["_ndcg_per_query"])
+
+        print(f"\n  Significance vs BM25: BM25+Rerank p={sig_bm25r['p_value']:.4f} | Dense p={sig_dense['p_value']:.4f} | Dense+Rerank p={sig_denser['p_value']:.4f}")
+        print(f"  Cohen's d (Dense vs BM25): {cd_dense:.4f}")
+        print(f"  Embedding cost this strategy: ${cost_usd:.4f} ({tokens_used} tokens, ${cost_per_query*1000:.4f}/1K queries)")
 
         # Print mini table
-        print(f"\n  {'System':<25} {'nDCG@10':>8} {'Recall@10':>10} {'MRR':>7} {'Lat(ms)':>9}")
-        print(f"  {'-'*60}")
+        print(f"\n  {'System':<25} {'nDCG@10':>8} {'LA-nDCG@10':>12} {'Recall@10':>10} {'MRR':>7} {'Lat(ms)':>9}")
+        print(f"  {'-'*70}")
         for name, m, lat in [
             ("BM25", bm25_metrics, bm25_lat),
-            ("BM25+Rerank", bm25_rerank_metrics, bm25_lat + rerank_lat_bm25),
+            ("BM25+Rerank", bm25_rerank_metrics, bm25_rerank_lat),
             ("Dense-OpenAI", dense_metrics, dense_lat),
-            ("Dense-OpenAI+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
+            ("Dense-OpenAI+Rerank", dense_rerank_metrics, dense_rerank_lat),
         ]:
-            print(f"  {name:<25} {m['ndcg@10']:>8.4f} {m['recall@10']:>10.4f} {m['mrr']:>7.4f} {lat:>9.1f}")
+            print(f"  {name:<25} {m['ndcg@10']:>8.4f} {m['la_ndcg@10']:>12.4f} {m['recall@10']:>10.4f} {m['mrr']:>7.4f} {lat:>9.1f}")
+
+        # Collect for position bias (manual implementation — no BenchmarkRun objects needed)
+        pos_bias_data[f"{strategy}/BM25"] = bm25_results
+        pos_bias_data[f"{strategy}/BM25+Rerank"] = bm25_rerank_results
+        pos_bias_data[f"{strategy}/Dense-OpenAI"] = dense_results
+        pos_bias_data[f"{strategy}/Dense-OpenAI+Rerank"] = dense_rerank_results
 
         # Store records
-        for name, m, lat in [
-            ("BM25", bm25_metrics, bm25_lat),
-            ("BM25+Rerank", bm25_rerank_metrics, bm25_lat + rerank_lat_bm25),
-            ("Dense-OpenAI", dense_metrics, dense_lat),
-            ("Dense-OpenAI+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
+        for name, m, lat, sig, extra in [
+            ("BM25", bm25_metrics, bm25_lat, None, {}),
+            ("BM25+Rerank", bm25_rerank_metrics, bm25_rerank_lat, sig_bm25r, {}),
+            ("Dense-OpenAI", dense_metrics, dense_lat, sig_dense,
+             {"cohens_d_vs_bm25": round(cd_dense, 4),
+              "embed_tokens": tokens_used,
+              "embed_cost_usd": round(cost_usd, 6),
+              "cost_per_1k_queries_usd": round(cost_per_query * 1000, 4)}),
+            ("Dense-OpenAI+Rerank", dense_rerank_metrics, dense_rerank_lat, sig_denser, {}),
         ]:
-            all_records.append({
+            record = {
                 "domain": domain,
                 "dataset": dataset,
                 "chunking": strategy,
@@ -439,22 +491,59 @@ def main() -> None:
                 "ndcg@10": m["ndcg@10"],
                 "ndcg@10_ci_lower": m["ndcg@10_ci_lower"],
                 "ndcg@10_ci_upper": m["ndcg@10_ci_upper"],
+                "la_ndcg@10": m["la_ndcg@10"],
                 "recall@10": m["recall@10"],
                 "mrr": m["mrr"],
                 "map": m["map"],
                 "n_queries": m["n_queries"],
                 "latency_ms": round(lat, 2),
-            })
+            }
+            if sig is not None:
+                record["p_value_vs_bm25"] = round(sig["p_value"], 4)
+                record["significant_vs_bm25"] = sig["p_value"] < 0.05
+            record.update(extra)
+            all_records.append(record)
+
+    # Position bias audit (manual — compute per-tier recall directly)
+    print(f"\n{'='*60}")
+    print("POSITION BIAS AUDIT")
+    print(f"{'='*60}")
+    doc_pos = {d["doc_id"]: d["corpus_position"] for d in corpus}
+
+    def pos_tier(rel_ids: set[str]) -> str:
+        if not rel_ids:
+            return "mid"
+        avg = sum(doc_pos.get(d, 0.5) for d in rel_ids) / len(rel_ids)
+        return "early" if avg < 0.33 else ("late" if avg >= 0.67 else "mid")
+
+    from retrievalbench.evaluate import recall_at_k as _recall_at_k
+    bias_results: dict[str, dict] = {}
+    for key, retrieved in pos_bias_data.items():
+        tier_recalls: dict[str, list[float]] = {"early": [], "mid": [], "late": []}
+        for qid, ret_ids in retrieved.items():
+            rel = qrels.get(qid, set())
+            tier = pos_tier(rel)
+            tier_recalls[tier].append(_recall_at_k(ret_ids, rel, 10))
+        def _mean(lst): return round(sum(lst) / len(lst), 4) if lst else None
+        early = _mean(tier_recalls["early"])
+        mid = _mean(tier_recalls["mid"])
+        late = _mean(tier_recalls["late"])
+        bias_gap = round((early or 0.0) - (late or 0.0), 4)
+        bias_results[key] = {"early": early, "mid": mid, "late": late, "bias_gap": bias_gap}
+        print(f"  {key:<40} early={early} mid={mid} late={late} gap={bias_gap:+.4f}")
 
     # Final summary table
-    print(f"\n{'='*70}")
+    print(f"\n{'='*80}")
     print(f"FULL RESULTS — domain={domain} dataset={dataset}")
-    print(f"{'='*70}")
-    print(f"{'Chunking':<12} {'System':<20} {'nDCG@10':>8} {'CI':>20} {'Recall@10':>10} {'Lat(ms)':>9}")
-    print(f"{'-'*70}")
+    print(f"{'='*80}")
+    print(f"{'Chunking':<12} {'System':<22} {'nDCG@10':>8} {'LA-nDCG':>8} {'Recall':>7} {'Lat(ms)':>9} {'p-val':>7}")
+    print(f"{'-'*80}")
     for r in all_records:
-        ci = f"[{r['ndcg@10_ci_lower']:.3f},{r['ndcg@10_ci_upper']:.3f}]"
-        print(f"{r['chunking']:<12} {r['system']:<20} {r['ndcg@10']:>8.4f} {ci:>20} {r['recall@10']:>10.4f} {r['latency_ms']:>9.1f}")
+        pval = f"{r['p_value_vs_bm25']:.4f}" if "p_value_vs_bm25" in r else "  base"
+        print(f"{r['chunking']:<12} {r['system']:<22} {r['ndcg@10']:>8.4f} {r['la_ndcg@10']:>8.4f} {r['recall@10']:>7.4f} {r['latency_ms']:>9.1f} {pval:>7}")
+
+    total_cost = _total_embed_tokens * EMBED_COST_PER_TOKEN
+    print(f"\nTotal embedding cost: ${total_cost:.4f} ({_total_embed_tokens} tokens)")
 
     # Save
     out_dir = results_dir(dataset)
@@ -467,6 +556,9 @@ def main() -> None:
             "date": datetime.now().isoformat(timespec="seconds"),
             "n_docs": len(corpus),
             "n_queries": len(queries),
+            "total_embed_tokens": _total_embed_tokens,
+            "total_embed_cost_usd": round(total_cost, 6),
+            "position_bias": bias_results,
             "results": all_records,
         }, f, indent=2)
     print(f"\nResults saved to {out_path}")
