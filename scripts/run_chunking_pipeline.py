@@ -116,13 +116,17 @@ def chunk_recursive(doc: dict, max_tokens: int = 512) -> list[dict]:
 
 
 def openai_embed(texts: list[str], batch_size: int = 500) -> list[list[float]]:
-    """Embed texts using OpenAI text-embedding-3-small in batches."""
+    """Embed texts using OpenAI text-embedding-3-small in batches.
+    Empty strings are replaced with a single space to avoid API errors.
+    """
     from openai import OpenAI
 
     client = OpenAI(api_key=OPENAI_API_KEY)
+    # Replace empty strings — OpenAI rejects them
+    safe_texts = [t if t.strip() else " " for t in texts]
     all_embeddings = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i: i + batch_size]
+    for i in range(0, len(safe_texts), batch_size):
+        batch = safe_texts[i: i + batch_size]
         resp = client.embeddings.create(input=batch, model=EMBED_MODEL)
         batch_embs = [d.embedding for d in sorted(resp.data, key=lambda x: x.index)]
         all_embeddings.extend(batch_embs)
@@ -370,7 +374,12 @@ def main() -> None:
     print("\nLoading reranker (cross-encoder/ms-marco-MiniLM-L-6-v2)...")
     reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-    CHUNKING_STRATEGIES = ["fixed_512", "sentence", "recursive", "semantic"]
+    # Skip semantic for large corpora (>20K docs) — too slow and costly
+    if len(corpus) > 20000:
+        CHUNKING_STRATEGIES = ["fixed_512", "sentence", "recursive"]
+        print(f"  Note: skipping semantic chunking (corpus size {len(corpus)} > 20K)")
+    else:
+        CHUNKING_STRATEGIES = ["fixed_512", "sentence", "recursive", "semantic"]
     all_records = []
 
     for strategy in CHUNKING_STRATEGIES:
