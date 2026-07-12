@@ -1,13 +1,15 @@
-"""Chunking + Reranking pipeline on BEIR scifact.
+"""Chunking + Reranking pipeline on a BEIR dataset.
 
-Tests 4 chunking strategies × 2 retrieval systems × reranking on scifact,
-evaluates with RetrievalBench metrics, saves per-domain results.
+Tests 4 chunking strategies × 2 retrieval systems × reranking, evaluates with
+RetrievalBench metrics, saves per-domain results.
 
 Usage:
-    python scripts/run_chunking_pipeline.py
+    python scripts/run_chunking_pipeline.py --dataset scifact
+    python scripts/run_chunking_pipeline.py --dataset nfcorpus
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -18,23 +20,31 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-DOMAIN = "scientific"
-DATASET = "scifact"
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results", DATASET)
+# domain label for each supported BEIR dataset, used for cross-domain reporting
+DATASET_DOMAINS = {
+    "scifact": "scientific",
+    "nfcorpus": "medical",
+    "fiqa": "finance",
+}
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBED_MODEL = "text-embedding-3-small"  # $0.02/1M tokens
+
+
+def results_dir(dataset: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "..", "results", dataset)
+
 
 # ---------------------------------------------------------------------------
 # 1. Load data
 # ---------------------------------------------------------------------------
 
-def load_scifact() -> tuple[list[dict], list[dict], dict[str, set[str]]]:
+def load_beir_dataset(dataset: str, domain: str) -> tuple[list[dict], list[dict], dict[str, set[str]]]:
     from datasets import load_dataset
 
-    print(f"[{DOMAIN.upper()}] Loading {DATASET} from HuggingFace...")
-    corpus_ds = load_dataset("BeIR/scifact", "corpus", split="corpus")
-    queries_ds = load_dataset("BeIR/scifact", "queries", split="queries")
-    qrels_ds = load_dataset("BeIR/scifact-qrels", split="test")
+    print(f"[{domain.upper()}] Loading {dataset} from HuggingFace...")
+    corpus_ds = load_dataset(f"BeIR/{dataset}", "corpus", split="corpus")
+    queries_ds = load_dataset(f"BeIR/{dataset}", "queries", split="queries")
+    qrels_ds = load_dataset(f"BeIR/{dataset}-qrels", split="test")
 
     corpus = [
         {"doc_id": str(r["_id"]), "text": (r["title"] + " " + r["text"]).strip()}
@@ -349,7 +359,13 @@ def evaluate(
 def main() -> None:
     from sentence_transformers import CrossEncoder
 
-    corpus, queries, qrels = load_scifact()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default="scifact", choices=sorted(DATASET_DOMAINS))
+    args = parser.parse_args()
+    dataset = args.dataset
+    domain = DATASET_DOMAINS[dataset]
+
+    corpus, queries, qrels = load_beir_dataset(dataset, domain)
 
     print("\nLoading reranker (cross-encoder/ms-marco-MiniLM-L-6-v2)...")
     reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
@@ -359,7 +375,7 @@ def main() -> None:
 
     for strategy in CHUNKING_STRATEGIES:
         print(f"\n{'='*60}")
-        print(f"[{DOMAIN.upper()} / {DATASET}] Chunking: {strategy}")
+        print(f"[{domain.upper()} / {dataset}] Chunking: {strategy}")
         print(f"{'='*60}")
 
         # Build chunk corpus
@@ -394,8 +410,8 @@ def main() -> None:
         for name, m, lat in [
             ("BM25", bm25_metrics, bm25_lat),
             ("BM25+Rerank", bm25_rerank_metrics, bm25_lat + rerank_lat_bm25),
-            ("Dense-BGE", dense_metrics, dense_lat),
-            ("Dense-BGE+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
+            ("Dense-OpenAI", dense_metrics, dense_lat),
+            ("Dense-OpenAI+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
         ]:
             print(f"  {name:<25} {m['ndcg@10']:>8.4f} {m['recall@10']:>10.4f} {m['mrr']:>7.4f} {lat:>9.1f}")
 
@@ -403,12 +419,12 @@ def main() -> None:
         for name, m, lat in [
             ("BM25", bm25_metrics, bm25_lat),
             ("BM25+Rerank", bm25_rerank_metrics, bm25_lat + rerank_lat_bm25),
-            ("Dense-BGE", dense_metrics, dense_lat),
-            ("Dense-BGE+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
+            ("Dense-OpenAI", dense_metrics, dense_lat),
+            ("Dense-OpenAI+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
         ]:
             all_records.append({
-                "domain": DOMAIN,
-                "dataset": DATASET,
+                "domain": domain,
+                "dataset": dataset,
                 "chunking": strategy,
                 "system": name,
                 "ndcg@10": m["ndcg@10"],
@@ -423,7 +439,7 @@ def main() -> None:
 
     # Final summary table
     print(f"\n{'='*70}")
-    print(f"FULL RESULTS — domain={DOMAIN} dataset={DATASET}")
+    print(f"FULL RESULTS — domain={domain} dataset={dataset}")
     print(f"{'='*70}")
     print(f"{'Chunking':<12} {'System':<20} {'nDCG@10':>8} {'CI':>20} {'Recall@10':>10} {'Lat(ms)':>9}")
     print(f"{'-'*70}")
@@ -432,12 +448,13 @@ def main() -> None:
         print(f"{r['chunking']:<12} {r['system']:<20} {r['ndcg@10']:>8.4f} {ci:>20} {r['recall@10']:>10.4f} {r['latency_ms']:>9.1f}")
 
     # Save
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    out_path = os.path.join(RESULTS_DIR, "chunking_results.json")
+    out_dir = results_dir(dataset)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "chunking_results.json")
     with open(out_path, "w") as f:
         json.dump({
-            "domain": DOMAIN,
-            "dataset": DATASET,
+            "domain": domain,
+            "dataset": dataset,
             "date": datetime.now().isoformat(timespec="seconds"),
             "n_docs": len(corpus),
             "n_queries": len(queries),
