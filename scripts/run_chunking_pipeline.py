@@ -108,7 +108,6 @@ def chunk_recursive(doc: dict, max_tokens: int = 512) -> list[dict]:
 def openai_embed(texts: list[str], batch_size: int = 500) -> list[list[float]]:
     """Embed texts using OpenAI text-embedding-3-small in batches."""
     from openai import OpenAI
-    import numpy as np
 
     client = OpenAI(api_key=OPENAI_API_KEY)
     all_embeddings = []
@@ -364,28 +363,28 @@ def main() -> None:
         print(f"{'='*60}")
 
         # Build chunk corpus
-        print(f"  Building chunk corpus...")
+        print("  Building chunk corpus...")
         t0 = time.perf_counter()
         chunk_corpus = build_chunk_corpus(corpus, strategy)
         print(f"  {len(chunk_corpus)} chunks from {len(corpus)} docs ({time.perf_counter()-t0:.1f}s)")
 
         # BM25
-        print(f"  Running BM25...")
+        print("  Running BM25...")
         bm25_results, bm25_lat = retrieve_bm25_chunks(chunk_corpus, queries)
         bm25_metrics = evaluate(bm25_results, qrels)
 
         # BM25 + Rerank
-        print(f"  Reranking BM25 results...")
+        print("  Reranking BM25 results...")
         bm25_rerank_results, rerank_lat_bm25 = rerank(bm25_results, queries, corpus, reranker)
         bm25_rerank_metrics = evaluate(bm25_rerank_results, qrels)
 
         # Dense
-        print(f"  Running Dense (OpenAI text-embedding-3-small)...")
+        print("  Running Dense (OpenAI text-embedding-3-small)...")
         dense_results, dense_raw, dense_lat = retrieve_dense_chunks(chunk_corpus, queries)
         dense_metrics = evaluate(dense_results, qrels)
 
         # Dense + Rerank
-        print(f"  Reranking Dense results...")
+        print("  Reranking Dense results...")
         dense_rerank_results, rerank_lat_dense = rerank(dense_results, queries, corpus, reranker)
         dense_rerank_metrics = evaluate(dense_rerank_results, qrels)
 
@@ -393,10 +392,10 @@ def main() -> None:
         print(f"\n  {'System':<25} {'nDCG@10':>8} {'Recall@10':>10} {'MRR':>7} {'Lat(ms)':>9}")
         print(f"  {'-'*60}")
         for name, m, lat in [
-            (f"BM25", bm25_metrics, bm25_lat),
-            (f"BM25+Rerank", bm25_rerank_metrics, bm25_lat + rerank_lat_bm25),
-            (f"Dense-BGE", dense_metrics, dense_lat),
-            (f"Dense-BGE+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
+            ("BM25", bm25_metrics, bm25_lat),
+            ("BM25+Rerank", bm25_rerank_metrics, bm25_lat + rerank_lat_bm25),
+            ("Dense-BGE", dense_metrics, dense_lat),
+            ("Dense-BGE+Rerank", dense_rerank_metrics, dense_lat + rerank_lat_dense),
         ]:
             print(f"  {name:<25} {m['ndcg@10']:>8.4f} {m['recall@10']:>10.4f} {m['mrr']:>7.4f} {lat:>9.1f}")
 

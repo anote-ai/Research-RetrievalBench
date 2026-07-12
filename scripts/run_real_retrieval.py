@@ -169,7 +169,7 @@ def evaluate(
 ) -> dict:
     from retrievalbench.evaluate import (
         ndcg_at_k, recall_at_k, mean_reciprocal_rank,
-        average_precision, bootstrap_ci, permutation_test,
+        average_precision, bootstrap_ci,
     )
 
     ndcgs, recalls, mrrs, aps = [], [], [], []
@@ -279,11 +279,11 @@ def main() -> None:
     print(row("Hybrid-RRF", hybrid_metrics, hybrid_latency, hybrid_sig))
 
     print("\n† = significant vs BM25 (permutation test, Bonferroni corrected p<0.05)")
-    print(f"\nSignificance vs BM25:")
+    print("\nSignificance vs BM25:")
     print(f"  Dense:  p={corrected[0]:.4f} (corrected), observed_diff={sig_dense['observed_diff']:.4f}")
     print(f"  Hybrid: p={corrected[1]:.4f} (corrected), observed_diff={sig_hybrid['observed_diff']:.4f}")
 
-    print(f"\nnDCG@10 deltas vs BM25:")
+    print("\nnDCG@10 deltas vs BM25:")
     print(f"  Dense  : {dense_metrics['ndcg@10'] - bm25_metrics['ndcg@10']:+.4f}")
     print(f"  Hybrid : {hybrid_metrics['ndcg@10'] - bm25_metrics['ndcg@10']:+.4f}")
     print(f"\nLatency (ms): BM25={bm25_latency:.1f} | Dense={dense_latency:.1f} | Hybrid={hybrid_latency:.1f}")
