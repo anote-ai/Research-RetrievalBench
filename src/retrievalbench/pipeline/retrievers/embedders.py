@@ -91,7 +91,7 @@ class OpenAIEmbedder(Embedder):
                     embs = [d.embedding for d in sorted(resp.data, key=lambda x: x.index)]
                     all_embs.extend(embs)
                     break
-                except (APITimeoutError, APIConnectionError) as e:
+                except (APITimeoutError, APIConnectionError):
                     if attempt == 4:
                         raise
                     _time.sleep(2 ** attempt)

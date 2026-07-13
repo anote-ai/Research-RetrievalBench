@@ -13,11 +13,10 @@ import json
 import os
 from datetime import datetime
 
-from .config import ExperimentConfig, DATASET_DOMAINS
-from .loaders import load_dataset
+from .config import ExperimentConfig
 from .chunkers import build_chunk_corpus
 from .retrievers import make_embedder, retrieve_bm25, retrieve_dense
-from .rerankers import rerank, default_reranker_for, RERANKER_REGISTRY
+from .rerankers import rerank
 from .metrics import evaluate_config
 
 

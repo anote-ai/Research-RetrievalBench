@@ -18,9 +18,9 @@ from collections import defaultdict
 from dotenv import load_dotenv
 load_dotenv()
 
-from datasets import load_dataset
-from rank_bm25 import BM25Okapi
-from sentence_transformers import CrossEncoder
+from datasets import load_dataset  # noqa: E402
+from rank_bm25 import BM25Okapi  # noqa: E402
+from sentence_transformers import CrossEncoder  # noqa: E402
 
 
 def load_quora():

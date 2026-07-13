@@ -15,7 +15,6 @@ CSI/ESI formalization (Claim 2: chunking matters more than embedding model):
 """
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 
 

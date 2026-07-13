@@ -27,8 +27,8 @@ load_dotenv()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from retrievalbench.pipeline import (  # noqa: E402
-    DATASET_DOMAINS, ExperimentGrid, EmbedderSpec, ChunkerSpec,
-    EMBEDDER_REGISTRY, RERANKER_REGISTRY, GENERIC_CHUNKERS,
+    DATASET_DOMAINS, ExperimentGrid, ChunkerSpec,
+    EMBEDDER_REGISTRY, RERANKER_REGISTRY,
     STRUCTURE_AWARE_CHUNKERS, default_reranker_for,
     load_dataset, run_cell, save_results,
 )
