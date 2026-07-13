@@ -41,7 +41,7 @@ def _aggregate_to_docs(
         did = chunk_to_doc[cid]
         if s > doc_scores.get(did, -np.inf):
             doc_scores[did] = float(s)
-    top = sorted(doc_scores, key=doc_scores.get, reverse=True)[:k_docs]
+    top = sorted(doc_scores, key=lambda d: doc_scores[d], reverse=True)[:k_docs]
     return top, {d: doc_scores[d] for d in top}
 
 

@@ -6,6 +6,7 @@ in structure_aware.py and are the mechanism behind Claim 3.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from ..config import ChunkerSpec
 
@@ -75,7 +76,7 @@ def chunk_semantic(doc: dict, embedder, threshold: float = 0.75) -> list[dict]:
 
 
 # spec.name -> builder (no-embedder strategies)
-_GENERIC_BUILDERS = {
+_GENERIC_BUILDERS: dict[str, Callable[..., list[dict]]] = {
     "fixed_512": chunk_fixed,
     "sentence": chunk_sentence,
     "recursive": chunk_recursive,

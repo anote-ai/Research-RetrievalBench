@@ -42,7 +42,7 @@ def chunk_legal_clause(doc: dict, max_tokens: int = 512) -> list[dict]:
     if not parts:
         parts = [text]
 
-    chunks = []
+    chunks: list[dict] = []
     buf = ""
     for p in parts:
         if len(buf.split()) + len(p.split()) <= max_tokens and buf:
@@ -68,7 +68,7 @@ _MD_TABLE_SEP = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
 def chunk_financial_table(doc: dict, max_tokens: int = 512) -> list[dict]:
     """Keep tables as atomic chunks; chunk the prose around them normally."""
     lines = doc["text"].split("\n")
-    chunks = []
+    chunks: list[dict] = []
     prose_buf: list[str] = []
     table_buf: list[str] = []
     idx = 0
@@ -124,7 +124,7 @@ _MEDICAL_HEADING = re.compile(
 def chunk_medical_section(doc: dict, max_tokens: int = 512) -> list[dict]:
     marked = _MEDICAL_HEADING.sub(r"\n@@@\1", doc["text"])
     parts = [p.strip() for p in marked.split("\n@@@") if p.strip()] or [doc["text"]]
-    chunks = []
+    chunks: list[dict] = []
     buf = ""
     for p in parts:
         if len(buf.split()) + len(p.split()) <= max_tokens and buf:
@@ -163,7 +163,7 @@ def build_structure_aware(corpus: list[dict], spec: ChunkerSpec) -> list[dict]:
     fn = _BUILDERS.get(spec.name)
     if fn is None:
         raise ValueError(f"unknown structure-aware chunker: {spec.name}")
-    chunks = []
+    chunks: list[dict] = []
     for doc in corpus:
         chunks.extend(fn(doc, **spec.params))
     return chunks
