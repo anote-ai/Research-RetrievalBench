@@ -147,19 +147,30 @@ def openai_embed(texts: list[str], batch_size: int = 500) -> list[list[float]]:
     """Embed texts using OpenAI text-embedding-3-small in batches.
     Empty strings are replaced with a single space to avoid API errors.
     Accumulates token usage into global _total_embed_tokens for cost tracking.
+    Retries up to 5 times on timeout/connection errors with exponential backoff.
     """
     global _total_embed_tokens
-    from openai import OpenAI
+    import time as _time
+    from openai import OpenAI, APITimeoutError, APIConnectionError
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=OPENAI_API_KEY, timeout=120.0)
     safe_texts = [t if t.strip() else " " for t in texts]
     all_embeddings = []
     for i in range(0, len(safe_texts), batch_size):
         batch = safe_texts[i: i + batch_size]
-        resp = client.embeddings.create(input=batch, model=EMBED_MODEL)
-        _total_embed_tokens += resp.usage.total_tokens
-        batch_embs = [d.embedding for d in sorted(resp.data, key=lambda x: x.index)]
-        all_embeddings.extend(batch_embs)
+        for attempt in range(5):
+            try:
+                resp = client.embeddings.create(input=batch, model=EMBED_MODEL)
+                _total_embed_tokens += resp.usage.total_tokens
+                batch_embs = [d.embedding for d in sorted(resp.data, key=lambda x: x.index)]
+                all_embeddings.extend(batch_embs)
+                break
+            except (APITimeoutError, APIConnectionError) as e:
+                if attempt == 4:
+                    raise
+                wait = 2 ** attempt
+                print(f"    [retry {attempt+1}/5] {e.__class__.__name__}, waiting {wait}s...")
+                _time.sleep(wait)
     return all_embeddings
 
 
@@ -401,6 +412,8 @@ def main() -> None:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="scifact", choices=sorted(DATASET_DOMAINS))
+    parser.add_argument("--strategies", nargs="+", default=None,
+                        help="Run only these strategies (e.g. --strategies recursive semantic)")
     args = parser.parse_args()
     dataset = args.dataset
     domain = DATASET_DOMAINS[dataset]
@@ -412,11 +425,23 @@ def main() -> None:
 
     # Skip semantic for large corpora (>20K docs) — too slow and costly
     if len(corpus) > 20000:
-        CHUNKING_STRATEGIES = ["fixed_512", "sentence", "recursive"]
+        default_strategies = ["fixed_512", "sentence", "recursive"]
         print(f"  Note: skipping semantic chunking (corpus size {len(corpus)} > 20K)")
     else:
-        CHUNKING_STRATEGIES = ["fixed_512", "sentence", "recursive", "semantic"]
-    all_records = []
+        default_strategies = ["fixed_512", "sentence", "recursive", "semantic"]
+    CHUNKING_STRATEGIES = args.strategies if args.strategies else default_strategies
+    # Load existing results if we're only running a subset of strategies
+    out_path = os.path.join(results_dir(dataset), "chunking_results.json")
+    if args.strategies and os.path.exists(out_path):
+        with open(out_path) as f:
+            existing = json.load(f)
+        all_records = [r for r in existing["results"]
+                       if r["chunking"] not in args.strategies]
+        existing_bias = existing.get("position_bias", {})
+        print(f"  Loaded {len(all_records)} existing records, will append {args.strategies}")
+    else:
+        all_records = []
+        existing_bias = {}
 
     # position_bias_audit expects BenchmarkRun-like objects; we'll collect data manually
     # Format: {(strategy, system): {qid: [ret_ids]}} for post-hoc position bias
@@ -535,7 +560,7 @@ def main() -> None:
         return "early" if avg < 0.33 else ("late" if avg >= 0.67 else "mid")
 
     from retrievalbench.evaluate import recall_at_k as _recall_at_k
-    bias_results: dict[str, dict] = {}
+    bias_results: dict[str, dict] = dict(existing_bias)
     for key, retrieved in pos_bias_data.items():
         tier_recalls: dict[str, list[float]] = {"early": [], "mid": [], "late": []}
         for qid, ret_ids in retrieved.items():
