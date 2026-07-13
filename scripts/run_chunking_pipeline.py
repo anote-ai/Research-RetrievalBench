@@ -27,6 +27,7 @@ DATASET_DOMAINS = {
     "fiqa": "finance",
     "quora": "community",
     "arguana": "argumentation",
+    "scidocs": "technical",
 }
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBED_MODEL = "text-embedding-3-small"  # $0.02/1M tokens

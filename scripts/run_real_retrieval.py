@@ -1,10 +1,19 @@
-"""Real retrieval pipeline: BM25 + Dense (BGE-small) + Hybrid RRF on BEIR scifact.
+"""[DEPRECATED] Early single-domain probe. Superseded by the chunking pipeline.
 
-Usage:
-    python scripts/run_real_retrieval.py
+This was the first real-retrieval probe (BM25 + Dense + Hybrid RRF on scifact
+only). It has been superseded by:
+  - scripts/run_chunking_pipeline.py  (4 chunking × 4 systems, multi-domain)
+  - src/retrievalbench/pipeline/      (config-driven grid: multi-embedder,
+                                       multi-reranker, structure-aware chunkers)
 
-Downloads scifact from HuggingFace (~5K docs), runs BM25, dense, and hybrid
-retrieval, evaluates with RetrievalBench metrics, saves results to results/scifact/.
+Its output was results/scifact/summary.json, now renamed legacy_summary.json.
+Kept because it is the only place Hybrid-RRF is implemented — the new pipeline
+package does not yet include hybrid retrieval, so this is a reference for when
+that gets added.
+
+NOTE: the dense path here originally used a local BGE model but was switched to
+OpenAI text-embedding-3-small; the docstring above retained the stale "BGE-small"
+label until this deprecation. Do not run this for new experiments.
 """
 from __future__ import annotations
 
