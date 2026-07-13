@@ -25,6 +25,8 @@ DATASET_DOMAINS = {
     "scifact": "scientific",
     "nfcorpus": "medical",
     "fiqa": "finance",
+    "quora": "community",
+    "arguana": "argumentation",
 }
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBED_MODEL = "text-embedding-3-small"  # $0.02/1M tokens
@@ -68,6 +70,22 @@ def load_beir_dataset(dataset: str, domain: str) -> tuple[list[dict], list[dict]
             qrels[str(r["query-id"])].add(str(r["corpus-id"]))
     qrels = dict(qrels)
     queries = [q for q in queries if q["query_id"] in qrels]
+    max_c = int(os.getenv("RB_MAX_CORPUS", "0"))
+    if max_c and len(corpus) > max_c:
+        import random as _rnd
+        relevant = set().union(*qrels.values())
+        keep = [d for d in corpus if d["doc_id"] in relevant]
+        rest = [d for d in corpus if d["doc_id"] not in relevant]
+        _rnd.Random(42).shuffle(rest)
+        corpus = keep + rest[: max(0, max_c - len(keep))]
+        print(f"  Subsampled corpus to {len(corpus)} docs "
+              f"({len(keep)} qrels-relevant kept, seed 42)")
+    max_q = int(os.getenv("RB_MAX_QUERIES", "0"))
+    if max_q and len(queries) > max_q:
+        import random as _rnd
+        _rnd.Random(42).shuffle(queries)
+        queries = queries[:max_q]
+        print(f"  Subsampled to {max_q} queries (seed 42)")
 
     print(f"  Corpus: {len(corpus)} docs | Queries: {len(queries)}")
     return corpus, queries, qrels
