@@ -27,6 +27,7 @@ DATASET_DOMAINS = {
     "fiqa": "finance",
     "quora": "community",
     "arguana": "argumentation",
+    "auslegalqa": "legal",
     "scidocs": "technical",
 }
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -44,6 +45,40 @@ def results_dir(dataset: str) -> str:
 # ---------------------------------------------------------------------------
 # 1. Load data
 # ---------------------------------------------------------------------------
+
+
+def load_auslegalqa() -> tuple[list[dict], list[dict], dict[str, set[str]]]:
+    """Legal domain: isaacus/open-australian-legal-qa. Corpus = source case-law
+    snippets (deduplicated), queries = questions, qrels = 1:1 provenance."""
+    import re as _re
+    from collections import defaultdict as _dd
+    from datasets import load_dataset
+
+    print("[LEGAL] Loading isaacus/open-australian-legal-qa from HuggingFace...")
+    ds = load_dataset("isaacus/open-australian-legal-qa", split="train")
+    snippet_re = _re.compile(r"<snippet>\n(.*?)</snippet>", _re.S)
+    corpus, queries, qrels = [], [], _dd(set)
+    seen: dict[str, str] = {}
+    for i, row in enumerate(ds):
+        m = snippet_re.search(row["prompt"])
+        if not m:
+            continue
+        text = m.group(1).strip()
+        key = text[:200]
+        if key not in seen:
+            doc_id = f"doc_{len(seen):05d}"
+            seen[key] = doc_id
+            corpus.append({"doc_id": doc_id, "text": text, "corpus_position": 0.0})
+        qid = f"q_{i:05d}"
+        queries.append({"query_id": qid, "text": row["question"]})
+        qrels[qid].add(seen[key])
+    qrels = dict(qrels)
+    n = len(corpus)
+    for i, doc in enumerate(corpus):
+        doc["corpus_position"] = i / max(n - 1, 1)
+    print(f"  Corpus: {len(corpus)} docs | Queries: {len(queries)}")
+    return corpus, queries, qrels
+
 
 def load_beir_dataset(dataset: str, domain: str) -> tuple[list[dict], list[dict], dict[str, set[str]]]:
     from datasets import load_dataset
@@ -419,7 +454,16 @@ def main() -> None:
     dataset = args.dataset
     domain = DATASET_DOMAINS[dataset]
 
-    corpus, queries, qrels = load_beir_dataset(dataset, domain)
+    if args.dataset == "auslegalqa":
+
+
+        corpus, queries, qrels = load_auslegalqa()
+
+
+    else:
+
+
+        corpus, queries, qrels = load_beir_dataset(dataset, domain)
 
     print("\nLoading reranker (cross-encoder/ms-marco-MiniLM-L-6-v2)...")
     reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
