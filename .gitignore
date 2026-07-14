@@ -4,3 +4,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+
+# LaTeX build artifacts (keep compiled PDFs explicitly tracked as needed)
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

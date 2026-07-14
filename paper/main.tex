@@ -1,206 +1,488 @@
-% RetrievalBench paper draft
-% Compile: pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
-\documentclass[10pt]{article}
-\usepackage[margin=1in]{geometry}
+% RetrievalBench -- evidence-aligned anonymous AKBC submission.
+% Standalone Overleaf file: paste as main.tex. If akbc2027.sty or akbc.sty is
+% present, it uses that style; otherwise it falls back to AKBC's historical
+% single-column, ICLR-like layout.
+\documentclass[10pt,letterpaper]{article}
+\makeatletter
+\newif\ifakbcsty\akbcstyfalse
+\IfFileExists{akbc2027.sty}{\usepackage{akbc2027}\akbcstytrue}{%
+  \IfFileExists{akbc.sty}{\usepackage{akbc}\akbcstytrue}{}}
+\makeatother
 \usepackage{booktabs}
 \usepackage{amsmath,amssymb}
-\usepackage{graphicx}
-\usepackage{hyperref}
 \usepackage{multirow}
 \usepackage{array}
+\usepackage{microtype}
 \usepackage{xcolor}
 \usepackage{caption}
+\usepackage{enumitem}
+\ifakbcsty\else
+  \usepackage[letterpaper,textwidth=5.5in,textheight=9in,headheight=14pt,headsep=22pt]{geometry}
+  \usepackage{times}
+  \usepackage{fancyhdr}
+  \pagestyle{fancy}\fancyhf{}
+  \fancyhead[C]{\small\itshape Under review as a conference paper at AKBC}
+  \fancyfoot[C]{\small\thepage}
+  \renewcommand{\headrulewidth}{0.4pt}
+  \usepackage{titlesec}
+  \titleformat{\section}{\large\bfseries\scshape}{\thesection}{0.8em}{}
+  \titleformat{\subsection}{\normalsize\bfseries\scshape}{\thesubsection}{0.8em}{}
+  \titlespacing*{\section}{0pt}{14pt plus 2pt minus 2pt}{6pt}
+  \titlespacing*{\subsection}{0pt}{10pt plus 2pt minus 2pt}{4pt}
+\fi
+\captionsetup{font=small,labelfont=bf,skip=6pt}
+\usepackage[hidelinks]{hyperref}
+\setlist{nosep,leftmargin=*}
 
-\title{RetrievalBench: Production-Realistic Evaluation \\
-Shows BEIR Rankings Do Not Predict RAG Retrieval Performance}
-\author{Anonymous}
+\title{RetrievalBench: Chunking and Embedding Choice as\\
+First-Class Variables in Cross-Domain Retrieval Evaluation}
+\author{Anonymous AKBC Submission}
 \date{}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-BEIR established zero-shot cross-domain retrieval as the evaluation paradigm of the neural era, but production Retrieval-Augmented Generation (RAG) introduces failure modes that BEIR was never designed to measure: chunking artifacts, context-window saturation, latency SLAs, and per-query cost budgets. We introduce \textbf{RetrievalBench}, an evaluation framework that treats chunking strategy, reranking, latency, and cost as first-class variables alongside the retriever itself. Across seven BEIR domains spanning scientific, medical, financial, community, argumentation, and technical text, we find three results that contradict the assumptions practitioners inherit from BEIR-style leaderboards. \emph{First}, cross-encoder reranking---widely assumed to be a strict improvement---\textbf{degrades} dense retrieval quality on three of seven domains (nDCG@10 drops of 0.02--0.03 on arguana, fiqa, scidocs), while improving it only where dense recall is already saturated. \emph{Second}, context-window saturation analysis shows that beyond $k{=}3$ retrieved passages, additional passages contribute noise: for BM25+rerank, nDCG@10 \emph{falls} from 0.620 at $k{=}1$ to 0.607 at $k{=}10$. \emph{Third}, we introduce two sensitivity indices---CSI (Chunking Sensitivity Index) and ESI (Embedding Sensitivity Index)---and show that chunking strategy explains comparable or greater nDCG@10 variance than embedding model choice on document-heavy domains. We release the framework, per-query ranked lists, and a cost-quality Pareto analysis to enable retrieval selection under production constraints.
+Standard retrieval benchmarks evaluate systems over pre-segmented corpora, leaving document
+segmentation outside the experimental design. Production retrieval systems do not have this
+luxury: documents must be divided into retrievable units, and the segmentation policy may
+interact with both the corpus and the embedding model. We present \textbf{RetrievalBench}, a
+cross-domain evaluation framework that treats chunking strategy and embedding-model choice as
+controlled experimental variables. Our main study is a complete sensitivity matrix over twelve
+domains, four chunking strategies, and three dense embedding models, with BM25 included as a
+sparse reference and bootstrap confidence intervals computed for every configuration. Chunking
+is not a neutral preprocessing step: holding the retriever and corpus fixed, its selection changes
+NDCG@10 by as much as 47\% relative, and no chunker is uniformly best. We introduce the
+Chunking Sensitivity Index (CSI) and Embedding Sensitivity Index (ESI), a per-domain variance
+decomposition that identifies which decision deserves greater tuning attention. CSI exceeds ESI
+in 5 of 12 domains, especially in several structured or long-form collections, whereas embedding
+choice dominates in many short-passage matching tasks. These results replace the claim that
+``chunking always matters more'' with a domain-dependent diagnostic. The framework additionally
+records retrieval-stage latency and metered embedding-API usage, but we treat these measurements
+as exploratory rather than universal deployment estimates.
 \end{abstract}
 
 \section{Introduction}
 
-The dominant retrieval evaluation paradigm since 2021 is BEIR \cite{thakur2021beir}: a fixed set of datasets, each with a pre-segmented corpus, evaluated zero-shot with nDCG@10 as the headline metric. BEIR's influence is such that ``state-of-the-art retrieval'' is now synonymous with ``top of the BEIR leaderboard,'' and practitioners select embedding models accordingly.
+Retrieval evaluation is commonly built around a fixed corpus of atomic documents, a query set,
+relevance judgments, and a ranking metric such as NDCG@10 \cite{thakur2021beir}. This abstraction
+has enabled reproducible comparison across domains, but it hides a consequential decision faced
+by deployed retrieval systems: source documents must often be segmented before they can be
+indexed. A financial report can be split into windows, sentences, paragraphs, or semantically
+coherent groups. Each choice changes the units presented to the retriever and, consequently, the
+ranking that is evaluated.
 
-Production RAG systems, however, do not retrieve over BEIR-structured corpora. They retrieve over chunked documents---a 40-page contract split into passages by a chunking strategy that is itself a design decision. They feed the top-$k$ passages to a generator LLM whose context window and attention distribution determine an effective recall cutoff. They operate under latency SLAs where a 50\,ms sparse retriever and a 150\,ms reranker are not interchangeable. And when embeddings come from a paid API, every query costs money.
+Chunking is frequently discussed as an implementation detail. That treatment is questionable for
+two reasons. First, chunk boundaries determine which evidence is represented by a single vector or
+sparse document. Second, a chunking rule can interact with the embedding model: two models may
+respond differently to short sentences, long windows, and mixed-topic passages. Evaluating one
+fixed segmentation therefore risks attributing a preprocessing effect to the retriever itself.
 
-None of these dimensions appear in BEIR. We argue that this is not a minor omission: the dimensions BEIR ignores account for a substantial fraction of the variance in real RAG retrieval quality, and---critically---they \emph{reorder} the system rankings that BEIR produces. A system that wins on BEIR can lose in production, and a component that BEIR-style evaluation would always add (a reranker) can actively harm.
+RetrievalBench makes these decisions explicit. For each domain, we construct four chunked
+variants of a common document sample and evaluate dense retrieval with three embedding models.
+We include BM25 as a sparse reference, propagate document-level relevance judgments to chunks by
+parent-document identity, and aggregate retrieved chunks back to documents for evaluation. The
+result is not intended as a new absolute leaderboard. Because the main matrix uses controlled
+subsamples, it supports within-matrix comparisons among chunkers and embedders rather than
+comparison with full-corpus leaderboard scores.
 
-This paper makes four contributions:
+Our contributions are:
 \begin{enumerate}
-    \item \textbf{A production-realistic evaluation framework} (RetrievalBench) that factorizes retrieval quality into retriever $\times$ chunker $\times$ reranker cells, with per-query ranked-list storage enabling post-hoc re-$k$ analysis without re-running retrieval.
-    \item \textbf{Empirical evidence that reranking is not monotonically beneficial}: on 3/7 domains, adding a cross-encoder reranker to a strong dense retriever \emph{reduces} nDCG@10 (\S\ref{sec:rerank}).
-    \item \textbf{Context-window saturation analysis} showing that retrieval quality saturates---and for reranked lists, \emph{declines}---well below the $k{=}10$ that BEIR reports (\S\ref{sec:saturation}).
-    \item \textbf{Chunking vs.\ embedding sensitivity indices} (CSI/ESI) quantifying how much of the nDCG@10 variance across configurations is attributable to chunking strategy versus embedding model (\S\ref{sec:csi}).
+    \item A controlled cross-domain benchmark covering twelve domains, four operationally
+    specified chunking strategies, three dense embedding models, and a BM25 reference.
+    \item Empirical evidence that chunking choice changes NDCG@10 by up to 47\% relative and
+    interacts with both domain and retrieval model; no single strategy is uniformly best.
+    \item CSI and ESI, variance-based diagnostics that compare chunking sensitivity with
+    embedding-model sensitivity within each domain. The analysis shows that their relative
+    importance is domain-dependent rather than universal.
+    \item An artifact-oriented evaluation implementation with bootstrap uncertainty estimates,
+    paired-comparison utilities, metered OpenAI embedding usage, and optional latency and
+    reranking analyses. We distinguish these supported capabilities from the central matrix claims.
 \end{enumerate}
 
 \section{Related Work}
 
-\textbf{BEIR} \cite{thakur2021beir} standardized zero-shot cross-domain retrieval evaluation across 18 datasets, establishing nDCG@10 as the primary metric and pre-segmented corpora as the evaluation unit. Subsequent work---MTEB \cite{muennighoff2023mteb}, MS-MARCO leaderboard---extended the model coverage but retained BEIR's evaluation structure.
+\textbf{Cross-domain retrieval evaluation.}
+BEIR standardized heterogeneous zero-shot retrieval evaluation across biomedical, scientific,
+financial, fact-checking, question-answering, and other domains \cite{thakur2021beir}. Reproducible
+IR toolkits have similarly made sparse and dense baselines easier to compare \cite{lin2021pyserini}.
+RetrievalBench retains standard document-level metrics but varies the segmentation under which a
+document is indexed.
 
-\textbf{Chunking in RAG} is widely discussed in practitioner literature but rarely evaluated as a controlled variable. Most production RAG frameworks (LlamaIndex, LangChain) ship multiple chunkers (fixed-size, sentence, recursive, semantic) without empirical guidance on when each helps retrieval.
+\textbf{Dense retrieval and embedding models.}
+Dense passage retrieval represents queries and candidate text in a shared vector space
+\cite{karpukhin2020dpr}. General-purpose embedding benchmarks broadened evaluation across tasks
+\cite{muennighoff2023mteb}, while model families such as E5 and BGE provide strong compact
+retrievers \cite{wang2022e5,xiao2023cpack}. Our focus is not a new embedding architecture, but the
+interaction between the embedder and the chunked units it consumes.
 
-\textbf{Cross-encoder reranking} is known to improve BM25-based retrieval substantially but is typically evaluated as an add-on to a fixed retriever, not as a variable interacting with retriever strength. Our finding that reranking harms strong dense retrievers on several domains is, to our knowledge, not previously reported at this granularity.
+\textbf{Chunking and reranking.}
+Fixed windows, sentence grouping, recursive splitting, and semantic grouping are widely available
+in RAG tooling, yet they are rarely crossed systematically with both domain and embedding choice.
+Cross-encoder reranking is a standard second stage \cite{nogueira2019passage}. RetrievalBench
+supports reranking, but the central sensitivity matrix deliberately excludes reranked arms so that
+CSI and ESI measure chunking and embedding effects without introducing a second-stage model.
 
-\textbf{Latency-aware retrieval metrics} have been proposed in passing (e.g., in MS-MARCO discussion) but no composite metric with a latency budget has been widely adopted; we formalize LA-NDCG.
+\section{Experimental Framework}
 
-\section{Methodology}
+\subsection{Domains and sampling}
 
-\subsection{Evaluation Grid}
+The matrix contains twelve public-data domains: finance (FiQA), legal question answering
+(Open Australian Legal QA), biomedical retrieval (TREC-COVID), medical retrieval (NFCorpus),
+scientific claim verification (SciFact), technical literature retrieval (SciDocs), argumentation
+(ArguAna), community duplicate-question retrieval (Quora), open-domain question answering
+(Natural Questions), entity retrieval (DBpedia-Entity), fact checking (FEVER), and multi-hop
+question answering (HotpotQA).
 
-We evaluate a cartesian grid of retrieval configurations. Each \emph{cell} is a tuple
-$(\text{dataset}, \text{chunker}, \text{embedder}, \text{reranker})$, and each cell is run under \emph{both} a sparse (BM25) and a dense retriever, with and without the reranker arm. This yields, per cell, four system records: \{BM25, BM25+Rerank, Dense, Dense+Rerank\}.
+For comparability and tractable repeated indexing, we apply a seeded sampling policy. Each corpus
+contains 2,000 sampled fill documents plus every document referenced by the retained relevance
+judgments. Consequently, a corpus can exceed 2,000 documents when the relevant set alone is
+larger. We retain at most 500 seeded-sampled queries, except where the dataset contains fewer
+eligible queries or where the legal collection is evaluated in full. Sampling uses seed 42.
+Table~\ref{tab:data} reports the realized sizes.
 
-\textbf{Retrievers.} BM25 (rank\_bm25, Okapi) and dense retrieval over OpenAI \texttt{text-embedding-3-small} embeddings (1536-dim, L2-normalized, inner product). The framework also supports local embedders (BGE, E5, GTE, Nomic) via \texttt{sentence-transformers}; results reported here use the OpenAI embedder for cross-domain consistency.
-
-\textbf{Chunkers.} Four generic chunkers (fixed-512, sentence, recursive, semantic) plus three structure-aware chunkers matched to domain structure: \texttt{legal\_clause} (regex on contract headings), \texttt{financial\_table} (markdown table preservation), \texttt{medical\_section} (IMRAD sectioning).
-
-\textbf{Rerankers.} Cross-encoder rerankers from \texttt{sentence-transformers}: \texttt{ms-marco-MiniLM-L-6-v2} (general), \texttt{quora-distilroberta} (community/duplicate), \texttt{bge-reranker}. Each reranker includes a \emph{degeneracy detector} that flags no-op reranking (score stdev $< 10^{-6}$) so silent failures are surfaced rather than misread as ``rerank had no effect.''
-
-\subsection{Metrics}
-
-\textbf{nDCG@10, Recall@10, MRR, MAP} (standard). \textbf{LA-NDCG} (Latency-Adjusted NDCG):
-\begin{equation}
-\text{LA-NDCG}@k = \text{nDCG}@k \cdot \exp\!\left(-\max(0,\, \ell - b)/b\right),
-\label{eq:landcg}
-\end{equation}
-where $\ell$ is measured per-query latency and $b{=}500\,$ms is the latency budget. Systems within budget are penalized negligibly; systems exceeding it are exponentially discounted. \textbf{Bootstrap 95\% CIs} (1000 resamples) and \textbf{permutation tests} with Bonferroni correction are computed per domain.
-
-\textbf{Per-query ranked lists.} For every cell we persist both the doc-level top-$k_{docs}$ and chunk-level top-$k_{chunks}$ ranked lists as a sidecar JSON. This decouples retrieval cost from evaluation: any future re-$k$ analysis (saturation, CSI at different $k$) reuses stored lists with zero retrieval re-runs.
-
-\subsection{Sensitivity Indices}
-
-To test whether chunking or embedding explains more variance, we define:
-\begin{align}
-\text{CSI} &= \sigma\!\left(\overline{\text{nDCG}}_{\text{across chunkers, fixed embedder}}\right) \\
-\text{ESI} &= \sigma\!\left(\overline{\text{nDCG}}_{\text{across embedders, fixed chunker}}\right)
-\end{align}
-CSI $>$ ESI indicates that the choice of chunking strategy moves nDCG@10 more than the choice of embedding model---the central claim of the chunking-matters thesis. Both are validated on synthetic data with known dominant factors.
-
-\subsection{Datasets}
-
-We report on seven BEIR domains (Table~\ref{tab:datasets}); five additional domains (touche-2020, climate-fever, dbpedia-entity, hotpotqa, msmarco) plus CUAD (legal, non-BEIR) are integrated and running at the time of writing. Subsampling (RB\_MAX\_CORPUS=2000, RB\_MAX\_QUERIES=50) is applied to scifact and touche-2020 for the smoke-test configurations reported in the saturation analysis; full-corpus runs are used elsewhere.
-
-\begin{table}[h]
+\begin{table}[t]
 \centering
-\caption{Domains evaluated (BEIR subset).}
-\label{tab:datasets}
+\caption{Domains and realized matrix sizes. Corpus subsampling always retains qrels-relevant
+documents, so some collections exceed 2,000 documents.}
+\label{tab:data}
 \small
 \begin{tabular}{llrr}
 \toprule
-Domain & Dataset & Corpus & Queries \\
+Domain & Dataset & Documents & Queries \\
 \midrule
-Scientific & scifact & 2{,}000* & 50* \\
-Medical & nfcorpus & 3{,}633 & 323 \\
-Finance & fiqa & 57{,}638 & 648 \\
-Community & quora & 100{,}000 & 650 \\
-Argumentation & arguana & 8{,}674 & 1{,}406 \\
-Technical & scidocs & 25{,}657 & 1{,}000 \\
-Argumentation & touche-2020 & 2{,}000* & 49* \\
+Finance & fiqa & 2,000 & 500 \\
+Legal & auslegalqa & 2,099 & 2,124 \\
+Biomedical & trec-covid & 17,537 & 50 \\
+Argumentation & arguana & 1,999 & 500 \\
+Open-domain QA & nq & 2,000 & 500 \\
+Medical & nfcorpus & 3,128 & 323 \\
+Scientific & scifact & 2,000 & 300 \\
+Technical & scidocs & 2,180 & 500 \\
+Community & quora & 2,000 & 500 \\
+Fact checking & fever & 2,000 & 500 \\
+Multi-hop QA & hotpotqa & 2,000 & 500 \\
+Entity retrieval & dbpedia-entity & 14,877 & 400 \\
 \bottomrule
 \end{tabular}
-\\
-\footnotesize{*subsampled for smoke-test configuration; full runs elsewhere.}
 \end{table}
+
+Subsampling reduces the number of distractors and can inflate absolute effectiveness. We therefore
+use the matrix to compare configurations evaluated on the same sampled corpus; we do not present
+its absolute scores as BEIR leaderboard replacements.
+
+\subsection{Operational chunking strategies}
+
+We evaluate four strategies, described here according to the implementation used to produce the
+reported matrix:
+\begin{itemize}
+    \item \textbf{Fixed-512}: non-overlapping progress through whitespace-delimited text using
+    windows of at most 512 words and an overlap of 50 words.
+    \item \textbf{Sentence}: non-overlapping windows of three sentences, using NLTK sentence
+    segmentation.
+    \item \textbf{Recursive}: split first on blank-line paragraph boundaries; paragraphs exceeding
+    512 whitespace-delimited words are split into sentences.
+    \item \textbf{Semantic}: embed sentences with OpenAI
+    \texttt{text-embedding-3-small} and greedily merge adjacent sentences when cosine similarity
+    is at least 0.75. These boundaries are computed independently of the downstream dense
+    retriever and reused across embedding-model comparisons.
+\end{itemize}
+
+These names are operational labels rather than claims that the implementations exhaust all
+possible fixed, sentence-based, recursive, or semantic chunkers. This distinction is important:
+our conclusions concern sensitivity to these four concrete policies.
+
+\subsection{Retrievers and embedders}
+
+The sparse reference is BM25. Dense retrieval uses OpenAI
+\texttt{text-embedding-3-small} (1,536 dimensions),
+\texttt{BAAI/bge-small-en-v1.5} (384 dimensions), and
+\texttt{intfloat/e5-small-v2} (384 dimensions). BGE queries use the model's retrieval instruction;
+E5 queries and passages use the \texttt{query:} and \texttt{passage:} prefixes. Embeddings are
+L2-normalized and scored by inner product.
+
+For each query, the retriever selects the top 50 chunks. Chunk scores are aggregated to their parent
+documents by maximum score, and the top 10 unique documents are evaluated. Relevance is inherited
+from document-level qrels: a retrieved chunk is treated as evidence for its parent document, but no
+claim is made that every chunk of a relevant document is independently relevant.
+
+\subsection{Metrics and uncertainty}
+
+We report NDCG@10 as the primary metric, with Recall@10, MRR, and MAP available in the result
+artifacts. For each configuration, we compute a 95\% bootstrap confidence interval over per-query
+NDCG using 1,000 seeded resamples. The framework also implements paired permutation tests and
+Cohen's $d$ for analyses where aligned per-query values are retained.
+
+\subsection{Chunking and embedding sensitivity}
+\label{sec:indices}
+
+For a fixed domain, let $M_{c,e}$ denote NDCG@10 for dense retrieval with chunker $c$ and
+embedder $e$. Let $C$ and $E$ be the sets of four chunkers and three embedders. We define
+\begin{align}
+\mathrm{CSI} &=
+\frac{\frac{1}{|E|}\sum_{e\in E}\mathrm{Var}_{c\in C}(M_{c,e})}
+     {\mathrm{Var}_{c\in C,e\in E}(M_{c,e})}, \\
+\mathrm{ESI} &=
+\frac{\frac{1}{|C|}\sum_{c\in C}\mathrm{Var}_{e\in E}(M_{c,e})}
+     {\mathrm{Var}_{c\in C,e\in E}(M_{c,e})}.
+\end{align}
+CSI $>$ ESI means that, within the evaluated pool, changing chunkers moves effectiveness more
+than changing embedders on average. The indices are diagnostics, not percentages of variance in a
+fully orthogonal ANOVA: interaction can cause CSI and ESI not to sum to one.
 
 \section{Results}
 
-\subsection{Reranking Is Not Monotonically Beneficial}
-\label{sec:rerank}
+\subsection{Chunking changes retrieval effectiveness}
 
-Table~\ref{tab:main} reports nDCG@10 across all domains for the four system arms. The headline finding: \textbf{on 3/7 domains, adding a cross-encoder reranker to the dense retriever reduces nDCG@10.}
+Table~\ref{tab:matrix} reports the complete matrix. Chunking causes substantial within-system
+variation. The largest observed relative swing is for biomedical BM25, from 0.476 with semantic
+chunking to 0.700 with fixed-512:
+$(0.700-0.476)/0.476=47.1\%$. Finance shows a similarly consistent pattern across all three dense
+models: fixed-512 exceeds semantic by 26\% relative for OpenAI, 40\% for BGE, and 41\% for E5.
 
-\begin{itemize}
-    \item \textbf{arguana}: Dense 0.407 $\to$ Dense+Rerank 0.381 ($-0.026$)
-    \item \textbf{fiqa}: Dense 0.448 $\to$ Dense+Rerank 0.426 ($-0.022$)
-    \item \textbf{scidocs}: Dense 0.204 $\to$ Dense+Rerank 0.199 ($-0.005$)
-\end{itemize}
+The best chunker is neither global nor model-independent. Recursive and fixed windows are often
+competitive on long or structured text, while sentence or semantic policies sometimes win in other
+domains. Quora supplies a useful boundary condition: its documents are already short and nearly
+atomic, so all four policies produce almost identical scores. This supports a qualified conclusion:
+chunking sensitivity depends strongly on the units present in the source corpus.
 
-Conversely, where dense recall is already near-saturated (scifact, touche-2020), reranking helps marginally (scifact $+0.020$). On quora, where Dense reaches recall@10 $= 0.985$ and MRR $= 0.951$, the reranker is a strict no-op---relevant documents already occupy rank 0, so within-top-$k$ reranking cannot change the set or the head rank. Our degeneracy detector confirms this is task saturation, not a reranker bug.
-
-\textbf{Implication.} The practitioner heuristic ``always add a reranker''---justified by BEIR-era results where rerankers lift weak BM25 baselines---does not transfer to strong dense retrievers. Reranking re-orders an already-good list using a model trained on a different distribution (MS-MARCO); when the dense retriever's ranking already aligns with relevance better than the reranker's, the reranker injects noise.
-
-\begin{table}[h]
+\begin{table*}[t]
 \centering
-\caption{nDCG@10 by domain and system (best per domain in \textbf{bold}; $\downarrow$ marks rerank harm).}
-\label{tab:main}
-\small
-\begin{tabular}{lcccc}
+\caption{NDCG@10 for the complete sensitivity matrix. BM25 is a sparse reference; the three dense
+columns form the $4\times3$ matrix used for CSI/ESI. Compare configurations within a domain, not
+with full-corpus leaderboards.}
+\label{tab:matrix}
+\scriptsize
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{llrrrr}
 \toprule
-Domain & BM25 & BM25+Rerank & Dense & Dense+Rerank \\
+Domain & Chunker & BM25 & Dense--OpenAI & Dense--BGE & Dense--E5 \\
 \midrule
-scifact & 0.581 & 0.607 & 0.746 & \textbf{0.766} \\
-nfcorpus & 0.268 & 0.286 & \textbf{0.385} & 0.380 $\downarrow$ \\
-fiqa & 0.160 & 0.198 & \textbf{0.448} & 0.426 $\downarrow$ \\
-quora & 0.800 & 0.800 & \textbf{0.955} & 0.955 \\
-arguana & 0.260 & 0.272 & \textbf{0.407} & 0.381 $\downarrow$ \\
-scidocs & 0.137 & 0.145 & \textbf{0.204} & 0.199 $\downarrow$ \\
-touche-2020 & 0.932 & 0.936 & \textbf{0.960} & 0.955 \\
+\multirow{4}{*}{Finance} & Sentence & .285 & .676 & .627 & .607 \\
+ & Fixed-512 & .346 & .739 & .677 & .665 \\
+ & Recursive & .329 & .726 & .663 & .624 \\
+ & Semantic & .254 & .585 & .485 & .471 \\
+\midrule
+\multirow{4}{*}{Legal} & Sentence & .688 & .793 & .764 & .811 \\
+ & Fixed-512 & .732 & .816 & .771 & .824 \\
+ & Recursive & .732 & .816 & .771 & .824 \\
+ & Semantic & .659 & .765 & .666 & .764 \\
+\midrule
+\multirow{4}{*}{Biomedical} & Sentence & .619 & .928 & .916 & .907 \\
+ & Fixed-512 & .700 & .948 & .964 & .920 \\
+ & Recursive & .690 & .943 & .944 & .906 \\
+ & Semantic & .476 & .879 & .854 & .839 \\
+\midrule
+\multirow{4}{*}{Argumentation} & Sentence & .416 & .571 & .557 & .492 \\
+ & Fixed-512 & .419 & .566 & .598 & .536 \\
+ & Recursive & .434 & .569 & .599 & .537 \\
+ & Semantic & .363 & .503 & .471 & .428 \\
+\midrule
+\multirow{4}{*}{Open-domain QA} & Sentence & .816 & .980 & .978 & .975 \\
+ & Fixed-512 & .839 & .980 & .979 & .981 \\
+ & Recursive & .841 & .979 & .979 & .965 \\
+ & Semantic & .785 & .985 & .960 & .950 \\
+\midrule
+\multirow{4}{*}{Medical} & Sentence & .269 & .399 & .363 & .329 \\
+ & Fixed-512 & .280 & .403 & .357 & .340 \\
+ & Recursive & .279 & .402 & .357 & .334 \\
+ & Semantic & .251 & .386 & .368 & .316 \\
+\midrule
+\multirow{4}{*}{Scientific} & Sentence & .583 & .797 & .785 & .717 \\
+ & Fixed-512 & .635 & .798 & .784 & .764 \\
+ & Recursive & .638 & .792 & .780 & .746 \\
+ & Semantic & .522 & .778 & .755 & .706 \\
+\midrule
+\multirow{4}{*}{Technical} & Sentence & .309 & .428 & .407 & .338 \\
+ & Fixed-512 & .327 & .439 & .434 & .392 \\
+ & Recursive & .328 & .434 & .432 & .344 \\
+ & Semantic & .281 & .412 & .394 & .326 \\
+\midrule
+\multirow{4}{*}{Community} & Sentence & .955 & .997 & .998 & .996 \\
+ & Fixed-512 & .955 & .997 & .998 & .996 \\
+ & Recursive & .955 & .997 & .998 & .996 \\
+ & Semantic & .954 & .997 & .997 & .991 \\
+\midrule
+\multirow{4}{*}{Fact checking} & Sentence & .954 & .986 & .984 & .989 \\
+ & Fixed-512 & .949 & .985 & .984 & .988 \\
+ & Recursive & .936 & .984 & .983 & .987 \\
+ & Semantic & .939 & .985 & .987 & .987 \\
+\midrule
+\multirow{4}{*}{Multi-hop QA} & Sentence & .850 & .937 & .932 & .949 \\
+ & Fixed-512 & .856 & .942 & .931 & .949 \\
+ & Recursive & .856 & .942 & .931 & .949 \\
+ & Semantic & .823 & .938 & .929 & .937 \\
+\midrule
+\multirow{4}{*}{Entity retrieval} & Sentence & .644 & .855 & .821 & .842 \\
+ & Fixed-512 & .651 & .860 & .823 & .865 \\
+ & Recursive & .651 & .860 & .824 & .865 \\
+ & Semantic & .618 & .846 & .825 & .792 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Chunking versus embedding is domain-dependent}
+
+Table~\ref{tab:csi} summarizes the variance decomposition. CSI exceeds ESI in 5 of 12 domains:
+TREC-COVID, FiQA, ArguAna, Natural Questions, and the legal collection. Embedding choice dominates
+strongly in NFCorpus, SciDocs, HotpotQA, SciFact, Quora, and FEVER. DBpedia-Entity is relatively
+balanced but remains embedding-dominant under the strict comparison.
+
+\begin{table}[t]
+\centering
+\caption{Chunking and embedding sensitivity for pure dense retrieval.}
+\label{tab:csi}
+\small
+\begin{tabular}{llrrc}
+\toprule
+Domain & Dataset & CSI & ESI & CSI$>$ESI \\
+\midrule
+Biomedical & trec-covid & .858 & .184 & Yes \\
+Finance & fiqa & .770 & .244 & Yes \\
+Argumentation & arguana & .723 & .338 & Yes \\
+Open-domain QA & nq & .710 & .677 & Yes \\
+Entity retrieval & dbpedia-entity & .643 & .717 & No \\
+Legal & auslegalqa & .566 & .507 & Yes \\
+Fact checking & fever & .483 & .787 & No \\
+Community & quora & .381 & .856 & No \\
+Scientific & scifact & .292 & .800 & No \\
+Multi-hop QA & hotpotqa & .223 & .874 & No \\
+Technical & scidocs & .222 & .826 & No \\
+Medical & nfcorpus & .059 & .985 & No \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Context-Window Saturation}
-\label{sec:saturation}
+These results reject both simple extremes. Chunking is not merely preprocessing, because it can
+move quality substantially while the retriever is fixed. But it is also not universally more important
+than the embedding model. A practical reading is to estimate both sensitivities on a representative
+sample: prioritize chunking experiments when CSI is high, model selection when ESI is high, and
+joint tuning when the values are close.
 
-Figure~\ref{tab:saturation} traces nDCG@$k$ for $k \in \{1,3,5,10,20,50,100\}$ on scifact, computed from stored per-query ranked lists with \emph{no retrieval re-run}.
+The result is conditional on the evaluated model pool. The two local embedders are similarly sized
+small models, whereas the API model belongs to a different capacity and training regime. This may
+increase observed embedding variance. Conversely, the four chunkers represent only one
+parameterization of each strategy family. CSI and ESI should therefore be interpreted as properties
+of a domain under a declared candidate set, not immutable corpus constants.
 
-\begin{table}[h]
-\centering
-\caption{Saturation curves (nDCG@$k$) on scifact. The rerank arm \emph{peaks at $k{=}1$ and declines}---passages beyond rank 1 add noise.}
-\label{tab:saturation}
-\small
-\begin{tabular}{lccccccc}
-\toprule
-System & $k{=}1$ & $k{=}3$ & $k{=}5$ & $k{=}10$ & $k{=}20$ & $k{=}50$ & $k{=}100$ \\
-\midrule
-BM25 & 0.540 & 0.571 & 0.578 & 0.581 & 0.581 & 0.581 & 0.581 \\
-Dense & 0.620 & 0.732 & 0.739 & 0.746 & 0.746 & 0.746 & 0.746 \\
-BM25+Rerank & \textbf{0.620} & 0.608 & 0.607 & 0.607 & 0.607 & 0.607 & 0.607 \\
-Dense+Rerank & 0.720 & 0.722 & 0.748 & \textbf{0.766} & 0.766 & 0.766 & 0.766 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\subsection{Exploratory deployment measurements}
 
-Two findings stand out. First, the BM25+Rerank curve is \textbf{monotonically non-increasing after $k{=}1$}: the reranker places the single best passage at rank 0, and every additional passage dilutes nDCG. This is the retrieval-side signature of context-window saturation---feeding more than one passage to the generator would strictly reduce signal. Second, all curves plateau by $k{=}10$; reporting nDCG@100 would be misleading, and the saturation point $k^*$ (smallest $k$ where marginal gain $<1\%$) is $k^* \in \{3,5\}$ for most arms. This motivates reporting saturation-aware metrics rather than a single $k{=}10$ number.
+RetrievalBench records metered OpenAI token usage and supports a latency-discounted score,
+\begin{equation}
+\mathrm{LA\mbox{-}NDCG}@10 = \mathrm{NDCG}@10
+\exp\!\left(-\frac{\max(0,\ell-B)}{B}\right),
+\end{equation}
+where $B$ is a user-selected latency budget. We include these facilities because deployment choices
+depend on more than effectiveness. However, the archived latency runs were collected on a single
+machine and do not share a fully production-complete online boundary: offline indexing is excluded,
+and dense timing does not include all API/network overhead. We therefore do not use them to claim a
+universal system reordering. They are examples of how the framework can be applied once a deployment
+defines its own measurement boundary.
 
-\subsection{Chunking vs.\ Embedding Sensitivity}
-\label{sec:csi}
-
-Domains evaluated with multiple chunkers (nfcorpus, arguana with 4 chunkers; fiqa, quora, scidocs with 3) allow CSI/ESI decomposition. Preliminary results indicate CSI $\geq$ ESI on document-heavy domains (nfcorpus, scidocs), supporting the thesis that chunking strategy is a first-class retrieval decision comparable to embedder choice. Full CSI/ESI tables with the structure-aware chunker ablation (legal\_clause on CUAD, financial\_table on fiqa, medical\_section on nfcorpus) are in progress as the remaining domains complete.
-
-\subsection{Latency and Cost}
-
-LA-NDCG collapses to nDCG when latency is within the 500\,ms budget; the dense retriever's sub-millisecond per-query latency (0.1--1.9\,ms) means LA-NDCG $\approx$ nDCG for dense arms, while reranker arms (50--1500\,ms) approach or exceed the budget. Per-run embedding API cost ranges from \$0.013 (scifact, 2k docs) to \$0.19 (fiqa, 58k docs); at production scale (millions of queries), the cost-quality Pareto frontier---selectable via \texttt{build\_pareto.py}---becomes the operative selection criterion, not raw nDCG.
+The reported cost field is similarly narrow: it is metered OpenAI embedding API spend at the price
+used during the experiments. It includes OpenAI calls used for semantic segmentation and OpenAI
+dense embeddings, but assigns no monetary value to local-model compute, hardware, energy, or
+reranker inference. It should not be interpreted as total serving cost.
 
 \section{Discussion}
 
-\textbf{Why reranking harms.} The reranker is a cross-encoder trained on MS-MARCO query-document pairs. When applied to a dense retriever's top-$k$ on an out-of-distribution domain (fiqa financial Q\&A, arguana argument matching), the reranker's relevance signal is weaker than the dense embedder's semantic match. Because reranking re-sorts within the top-$k$, a weaker-but-different signal acts as noise injection rather than refinement. This effect is invisible in BEIR-style evaluation, which typically pairs rerankers with BM25 baselines where \emph{any} semantic signal is an improvement.
+\textbf{Chunking is part of the evaluated system.}
+If two studies evaluate the same embedder using different segmentation policies, their scores need
+not estimate the same system. Benchmark reports should therefore publish chunker code and
+parameters alongside model identifiers and retrieval depth.
 
-\textbf{Why saturation matters for RAG.} A generator LLM fed $k{=}10$ passages allocates attention across all ten; if the marginal passages are noise (as the BM25+Rerank curve shows), they degrade generation quality even when they do not change nDCG@10. The saturation point $k^*$ is thus the retrieval-side optimum for RAG, and it is domain- and system-dependent---not a universal 10.
+\textbf{Short-document domains are an informative control.}
+The near-zero spread on Quora shows that a benchmark need not reward arbitrary chunker complexity.
+When documents are already atomic, segmentation has little room to change the indexed unit. This
+also cautions against extrapolating chunking conclusions from passage collections to long documents.
 
-\textbf{Limitations.} (1) Results are reported on 7/12 planned domains; the remaining 5 (touche-2020, climate-fever, dbpedia-entity, hotpotqa, msmarco) and CUAD are integrated and running. (2) The OpenAI embedder is the sole dense backend in reported results; local embedder comparisons (BGE/E5/GTE/Nomic) are wired but not yet run at scale. (3) Saturation is measured retrieval-side; end-to-end generator quality at each $k$ requires an LLM judge (stubbed in \texttt{analyze\_saturation.py --with-generator}, not yet wired). (4) Two domains use subsampled corpora for smoke-test configs; full-corpus reruns will replace these.
+\textbf{Sensitivity indices guide experimental allocation.}
+CSI and ESI do not nominate a universal winner. Their value is operational: a small pilot matrix can
+show whether engineering time is better spent exploring segmentation, models, or their interaction.
+
+\section{Limitations}
+
+First, the main matrix uses one seeded corpus/query sample per domain. Although every configuration
+within a domain shares that sample, additional seeds would better quantify sensitivity to distractor
+selection. Second, propagating document-level qrels to parent-linked chunks does not identify which
+specific chunk contains the judged evidence; chunk-level annotation would support a stricter analysis.
+Third, absolute matrix scores are inflated by subsampling and must not be compared directly with
+full-corpus leaderboards.
+
+Fourth, the embedder pool mixes an API model with two similarly sized open-source models; a
+same-capacity model pool would be a useful robustness check. Fifth, the four chunkers are concrete,
+relatively simple implementations. Different tokenizers, sentence windows, recursive separators,
+semantic thresholds, and overlap values could change CSI. Sixth, semantic boundaries are generated
+with the OpenAI model for all downstream embedders; this controls the segmentation across systems
+but may favor semantic judgments aligned with that model.
+
+Finally, latency, reranking, and monetary cost are supported by the framework but are not established
+here as universal cross-domain conclusions. Existing latency runs use a single environment and a
+limited timing boundary, local compute is not monetized, and some archived reranker runs produced
+unchanged rankings on out-of-domain tasks. We retain these analyses as exploratory artifacts rather
+than treating them as central evidence.
 
 \section{Conclusion}
 
-BEIR-style nDCG@10 is a necessary but insufficient metric for production RAG retrieval. RetrievalBench shows that the dimensions BEIR ignores---chunking, reranker interaction with retriever strength, context-window saturation, latency, and cost---do not merely add noise to the BEIR ranking; they \emph{invert} it. A reranker that BEIR-era intuition says to always add can reduce quality by 2--3 nDCG points. A $k{=}10$ cutoff that BEIR reports as the headline can be well past the saturation point. We provide the framework, per-query ranked lists, and analysis scripts to let practitioners evaluate retrieval under the constraints that actually govern production deployments.
+RetrievalBench evaluates a decision that fixed-corpus benchmarks usually hide. Across twelve
+domains, changing only the chunking strategy changes NDCG@10 by as much as 47\% relative, and
+the preferred strategy varies across domains and retrievers. CSI and ESI further show that the
+chunking-versus-embedding question has no universal answer: chunking dominates in 5 of 12 domains,
+while embedding choice dominates in the remainder of the evaluated pool. The broader lesson is
+methodological. Segmentation should be reported and evaluated as part of the retrieval system, and
+its importance should be measured rather than assumed.
 
-\bibliographystyle{plain}
-\bibliography{refs}
+\section*{Artifact and Reproducibility Statement}
 
-\appendix
-\section{Reproducibility}
-All code, configs, and per-query ranked lists are released. The pipeline is config-driven:
+The repository contains the per-domain aggregate result files used for Tables~\ref{tab:matrix} and
+\ref{tab:csi}, the seeded sampling and experiment runner, bootstrap metric implementation, and
+CSI/ESI analysis script. The reported matrix was generated with:
 \begin{verbatim}
-python scripts/run_experiment.py --datasets scifact nfcorpus \
-    --embedders openai-3-small --chunkers fixed_512 sentence \
-    --rerankers msmarco-minilm
+RB_MAX_CORPUS=2000 RB_MAX_QUERIES=500 \
+python scripts/run_chunking_pipeline.py --dataset <dataset> \
+  --embedders openai bge-small e5-small
 \end{verbatim}
-Subsampling via \texttt{RB\_MAX\_CORPUS}/\texttt{RB\_MAX\_QUERIES} env vars; HuggingFace mirror via \texttt{HF\_ENDPOINT}. Saturation analysis: \texttt{scripts/analyze\_saturation.py --dataset scifact}. Pareto frontier: \texttt{scripts/build\_pareto.py}.
+Some large-relevant-set collections exceed the nominal corpus cap because all qrels-relevant
+documents are retained. Aggregate artifacts are available for all twelve domains. Complete
+per-query ranked-list sidecars are not available for every historical run; accordingly, we do not
+claim that every published aggregate can be reconstructed from ranked lists alone. A table-generation
+and artifact-validation script should accompany the archival release to verify domain, chunker,
+embedder, and value completeness directly from the released JSON files.
+
+\begin{thebibliography}{99}
+
+\bibitem{thakur2021beir}
+N. Thakur, N. Reimers, A. R\"uckl\'e, A. Srivastava, and I. Gurevych.
+BEIR: A heterogeneous benchmark for zero-shot evaluation of information retrieval models.
+\emph{NeurIPS Datasets and Benchmarks}, 2021.
+
+\bibitem{lin2021pyserini}
+J. Lin, X. Ma, S.-C. Lin, J.-H. Yang, R. Pradeep, and R. Nogueira.
+Pyserini: A Python toolkit for reproducible information retrieval research with sparse and dense
+representations. \emph{SIGIR}, 2021.
+
+\bibitem{karpukhin2020dpr}
+V. Karpukhin, B. O\u{g}uz, S. Min, P. Lewis, L. Wu, S. Edunov, D. Chen, and W.-t. Yih.
+Dense passage retrieval for open-domain question answering. \emph{EMNLP}, 2020.
+
+\bibitem{muennighoff2023mteb}
+N. Muennighoff, N. Tazi, L. Magne, and N. Reimers.
+MTEB: Massive text embedding benchmark. \emph{EACL}, 2023.
+
+\bibitem{wang2022e5}
+L. Wang, N. Yang, X. Huang, B. Jiao, L. Yang, D. Jiang, R. Majumder, and F. Wei.
+Text embeddings by weakly-supervised contrastive pre-training.
+\emph{arXiv:2212.03533}, 2022.
+
+\bibitem{xiao2023cpack}
+S. Xiao, Z. Liu, P. Zhang, and N. Muennighoff.
+C-Pack: Packaged resources to advance general Chinese embedding.
+\emph{SIGIR}, 2024.
+
+\bibitem{nogueira2019passage}
+R. Nogueira and K. Cho.
+Passage re-ranking with BERT. \emph{arXiv:1901.04085}, 2019.
+
+\end{thebibliography}
 
 \end{document}
