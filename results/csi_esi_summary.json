@@ -1,0 +1,90 @@
+{
+ "core": [
+  {
+   "domain": "argumentation",
+   "dataset": "arguana",
+   "csi": 0.7226,
+   "esi": 0.3383,
+   "claim2_holds": true
+  },
+  {
+   "domain": "biomedical",
+   "dataset": "trec-covid",
+   "csi": 0.8583,
+   "esi": 0.1841,
+   "claim2_holds": true
+  },
+  {
+   "domain": "community",
+   "dataset": "quora",
+   "csi": 0.3808,
+   "esi": 0.8559,
+   "claim2_holds": false
+  },
+  {
+   "domain": "encyclopedic",
+   "dataset": "dbpedia-entity",
+   "csi": 0.643,
+   "esi": 0.7171,
+   "claim2_holds": false
+  },
+  {
+   "domain": "fact_checking",
+   "dataset": "fever",
+   "csi": 0.4834,
+   "esi": 0.787,
+   "claim2_holds": false
+  },
+  {
+   "domain": "finance",
+   "dataset": "fiqa",
+   "csi": 0.7699,
+   "esi": 0.2442,
+   "claim2_holds": true
+  },
+  {
+   "domain": "legal",
+   "dataset": "auslegalqa",
+   "csi": 0.5659,
+   "esi": 0.5074,
+   "claim2_holds": true
+  },
+  {
+   "domain": "medical",
+   "dataset": "nfcorpus",
+   "csi": 0.0588,
+   "esi": 0.9847,
+   "claim2_holds": false
+  },
+  {
+   "domain": "multi_hop",
+   "dataset": "hotpotqa",
+   "csi": 0.2226,
+   "esi": 0.874,
+   "claim2_holds": false
+  },
+  {
+   "domain": "scientific",
+   "dataset": "scifact",
+   "csi": 0.2921,
+   "esi": 0.8,
+   "claim2_holds": false
+  },
+  {
+   "domain": "technical",
+   "dataset": "scidocs",
+   "csi": 0.2223,
+   "esi": 0.8257,
+   "claim2_holds": false
+  },
+  {
+   "domain": "wikipedia",
+   "dataset": "nq",
+   "csi": 0.7097,
+   "esi": 0.6773,
+   "claim2_holds": true
+  }
+ ],
+ "claim2_holds_count": 5,
+ "n_core": 12
+}

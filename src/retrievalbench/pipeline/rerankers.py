@@ -68,7 +68,11 @@ def rerank(
         t0 = time.perf_counter()
         pairs = [[q["text"], doc_text.get(d, "")] for d in doc_ids]
         scores = np.asarray(model.predict(pairs), dtype="float64")
-        degenerate[qid] = bool(scores.std() < degenerate_threshold)
+        # Non-finite scores (NaN/inf) sort as no-ops and would otherwise slip
+        # past the stdev check (NaN < eps is False): treat them as degenerate.
+        degenerate[qid] = bool(
+            not np.all(np.isfinite(scores)) or scores.std() < degenerate_threshold
+        )
         order = np.argsort(-scores)  # stable descending
         ranked[qid] = [doc_ids[i] for i in order[:k]]
         latencies.append((time.perf_counter() - t0) * 1000)
