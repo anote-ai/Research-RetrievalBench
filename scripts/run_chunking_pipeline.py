@@ -467,7 +467,8 @@ def retrieve_dense_chunks(
     import numpy as np
 
     if embed_fn is None:
-        embed_fn = lambda texts, is_query=False: openai_embed(texts)
+        def embed_fn(texts, is_query=False):
+            return openai_embed(texts)
 
     chunk_ids = [c["chunk_id"] for c in chunk_corpus]
     chunk_to_doc = {c["chunk_id"]: c["doc_id"] for c in chunk_corpus}
