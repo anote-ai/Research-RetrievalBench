@@ -1,313 +1,322 @@
-# RetrievalBench: Production-Realistic Evaluation for Enterprise RAG Retrieval Systems
+# RetrievalBench Design and Experiment Specification
 
-## Vision Statement
+## 1. Purpose
 
-BEIR (2021) redefined retrieval evaluation for the neural era. Five years later, production RAG has introduced an entirely new set of failure modes — chunking artifacts, context-window saturation, latency SLAs, per-query cost budgets — that BEIR was never designed to measure. **RetrievalBench is the evaluation framework that bridges the gap between academic IR and production RAG.**
+RetrievalBench studies how document segmentation and embedding-model selection interact in cross-domain retrieval evaluation.
 
-We argue that a retrieval system's *academic* NDCG@10 and its *production* performance are only weakly correlated, and that the dimensions BEIR ignores account for the majority of variance in real enterprise deployments. This paper proves that claim empirically and provides the community with tools to measure and optimize for what actually matters.
+The central research question is:
 
----
+> When a corpus must be segmented before indexing, how much does chunking strategy change retrieval quality relative to embedding-model choice, and does that relationship generalize across domains?
 
-## 1. Problem Statement and Novelty
+This document describes the experiment that has actually been completed and reported. It replaces the earlier project proposal, which included planned latency, cost, structure-aware chunking, synthetic-query, and end-to-end generation experiments that were not completed at the same evidentiary level.
 
-### What BEIR Gets Right
-BEIR established zero-shot cross-domain retrieval as the right paradigm for evaluating retrieval generalization. Its 18 datasets, diverse domains, and standardized evaluation protocol made it the universal leaderboard for embedding models and sparse retrieval systems.
+## 2. Evidence Boundary
 
-### What BEIR Gets Wrong for Production RAG
-Production RAG introduces four dimensions BEIR systematically ignores:
+### 2.1 Core completed study
 
-**1. Chunking as a first-class variable.** In BEIR, documents arrive pre-chunked (or are treated as atomic units). In production, a 40-page 10-K filing must be split into retrievable chunks — and the chunking strategy *is* a retrieval design decision. We show empirically that chunking strategy explains more NDCG@10 variance than embedding model choice for document-heavy domains.
+The paper's central evidence consists of:
 
-**2. Context-window saturation.** When top-k retrieved passages are fed to a generator LLM, passages beyond a certain rank contribute noise rather than signal. BEIR measures retrieval in isolation; we measure retrieval *as a component of RAG*, where the effective recall cutoff is determined by the generator's context window and attention patterns.
+- 12 retrieval domains
+- 4 operational chunking strategies
+- 3 dense embedding models
+- BM25 as a sparse reference
+- NDCG@10 with bootstrap confidence intervals
+- per-domain CSI/ESI variance decomposition
 
-**3. Latency-adjusted quality.** A retrieval system with NDCG@10 = 0.52 and p99 latency = 800ms is worse than one with NDCG@10 = 0.48 and p99 latency = 50ms for most production applications. We introduce **LA-NDCG** (Latency-Adjusted NDCG), the first composite metric that captures this tradeoff.
+Supported conclusions:
 
-**4. Cost-quality Pareto optimality.** Dense retrieval via API embeddings (Cohere, Voyage, OpenAI) has per-query costs that matter enormously at scale. We characterize the cost-quality Pareto frontier, enabling practitioners to select the system that meets their accuracy requirement at minimum cost.
+1. Changing only the chunking strategy changes NDCG@10 by up to 47.1% relative in the observed matrix.
+2. The best chunking strategy varies across domains and retrieval models.
+3. Chunking sensitivity exceeds embedding sensitivity in 5 of 12 domains under the evaluated candidate pool.
+4. Embedding sensitivity exceeds chunking sensitivity in 7 of 12 domains.
 
-### Novel Contributions Summary
-- **RetrievalBench dataset**: 12 domains × 4 chunking strategies × 3 document length distributions = 144 evaluation conditions (vs. BEIR's 18 fixed conditions)
-- **LA-NDCG metric**: first latency-aware composite retrieval metric with theoretical grounding
-- **Cost-quality frontier**: first systematic cost characterization for embedding API retrieval at production scale
-- **Chunking taxonomy**: first empirical taxonomy of how chunking strategies interact with retrieval system type and document domain
-- **Context saturation analysis**: first study of how retrieval rank correlates with downstream generator performance across context window sizes
+### 2.2 Exploratory capabilities
 
----
+The repository also implements or archives:
 
-## 2. Research Objectives
+- cross-encoder reranking
+- latency-adjusted NDCG
+- OpenAI token and API-cost metering
+- hybrid fusion
+- structure-aware legal, financial, and medical chunkers
+- ranked-list saturation analysis
+- synthetic hardware-aware scheduling utilities
 
-1. **Demonstrate** that BEIR rankings are poor predictors of production RAG rankings (primary claim)
-2. **Quantify** how much chunking strategy, latency budget, and cost constraints alter system rankings relative to BEIR
-3. **Provide** a public leaderboard and evaluation toolkit that practitioners can use to select retrieval systems for their specific deployment constraints
-4. **Release** a reproducible evaluation framework so the community can add new systems, domains, and evaluation conditions
+These capabilities are not treated as equally validated headline findings in the current paper. In particular, archived latency measurements do not share a fully production-complete timing boundary, some reranker runs produced unchanged rankings, and structure-aware chunkers were not evaluated across the core matrix.
 
----
+## 3. Datasets
 
-## 3. Dataset Construction
+### 3.1 Core domains
 
-### 3.1 Domain Selection (12 domains)
-We select 12 domains covering the range of enterprise RAG use cases, stratified by document length distribution and domain specificity:
+| Domain | Dataset key | Source type | Documents | Queries |
+|---|---|---|---:|---:|
+| Finance | `fiqa` | BEIR | 2,000 | 500 |
+| Legal | `auslegalqa` | Open Australian Legal QA | 2,099 | 2,124 |
+| Biomedical | `trec-covid` | BEIR | 17,537 | 50 |
+| Argumentation | `arguana` | BEIR | 1,999 | 500 |
+| Open-domain QA | `nq` | BEIR | 2,000 | 500 |
+| Medical | `nfcorpus` | BEIR | 3,128 | 323 |
+| Scientific | `scifact` | BEIR | 2,000 | 300 |
+| Technical | `scidocs` | BEIR | 2,180 | 500 |
+| Community | `quora` | BEIR | 2,000 | 500 |
+| Fact checking | `fever` | BEIR | 2,000 | 500 |
+| Multi-hop QA | `hotpotqa` | BEIR | 2,000 | 500 |
+| Entity retrieval | `dbpedia-entity` | BEIR | 14,877 | 400 |
 
-| Domain | Avg Doc Length | Domain Specificity | Source |
-|---|---|---|---|
-| News articles | Short (300 tokens) | Low | BEIR/TREC-NEWS |
-| Wikipedia paragraphs | Medium (150 tokens) | Low | BEIR/NQ |
-| Legal contracts | Long (2,000+ tokens) | High | CUAD (public) |
-| SEC 10-K filings | Very long (5,000+ tokens) | High | EDGAR (public) |
-| Medical literature | Medium (250 tokens) | Very high | PubMed (public) |
-| Scientific papers | Long (1,500 tokens) | High | S2ORC subset |
-| Software documentation | Variable (100-2,000 tokens) | Medium | GitHub Wikis |
-| Customer support tickets | Short (200 tokens) | Medium | Publicly available datasets |
-| HR policy documents | Medium (500 tokens) | High | Synthetic (GPT-4o generated) |
-| Financial analyst reports | Long (3,000+ tokens) | High | SEC (public filings) |
-| Product manuals | Variable (500-5,000 tokens) | Medium | Publicly available |
-| Academic textbooks | Very long (chapter-level) | High | Open textbooks |
+The legal collection contains deduplicated court-decision snippets paired with questions. Its question text is LLM-synthesized over real case-law material, and its qrels reflect source provenance. This differs from the standard BEIR collections and should be disclosed when interpreting the legal result.
 
-### 3.2 Query Construction
-For each domain, we construct 3 query types:
-- **Factoid queries**: single-passage answer (BEIR-style)
-- **Multi-evidence queries**: answer requires synthesizing 2-3 passages (novel)
-- **Negative queries**: answer is NOT in the corpus (tests false positive rate) (novel)
+### 3.2 Sampling protocol
 
-Total: ~5,000 queries across all domains and query types.
+The matrix uses a shared seeded sampling policy:
 
-### 3.3 Relevance Judgments
-Relevance judgments collected via:
-- Automated pooling (top-20 from 5 retrieval systems)
-- Human annotation for ambiguous relevance grades (crowdworkers + domain expert review)
-- 3-level relevance: highly relevant (2), partially relevant (1), not relevant (0)
+1. Load standard queries and positive qrels.
+2. Retain every document referenced by the selected qrels.
+3. Add randomly selected non-relevant fill documents until reaching a nominal corpus target of 2,000.
+4. Retain at most 500 queries when a collection contains more.
+5. Use seed 42 for corpus fill and query sampling.
 
-### 3.4 Chunking Variants
-For each domain corpus, we create 4 chunking variants:
-- **Sentence-level**: spaCy sentence segmentation, avg ~30 tokens
-- **Fixed-size**: 512 tokens with 64-token overlap (standard practice)
-- **Paragraph-level**: double-newline splitting, avg ~200 tokens
-- **Structure-aware**: domain-specific parser that preserves semantic units (sections, table rows, list items). We implement structure-aware chunkers for legal (clause detection), financial (section detection + table preservation), and medical (section detection via standard section headers).
+If the relevant-document set alone exceeds 2,000 documents, all relevant documents are retained and the realized corpus exceeds the nominal cap. This explains TREC-COVID and DBpedia-Entity.
 
----
+Subsampling reduces the distractor pool and can inflate absolute effectiveness. Valid interpretation is restricted to comparisons among configurations evaluated on the same sampled domain. Matrix scores are not full-corpus leaderboard estimates.
 
-## 4. Systems Under Evaluation
+## 4. Chunking Specification
 
-### Sparse Retrieval
-- BM25 (Pyserini implementation, k1=0.9, b=0.4)
-- BM25 + query expansion via RM3
-- SPLADE-v3
+The matrix evaluates four concrete policies.
 
-### Dense Retrieval (Open-Source)
-- E5-large-v2
-- BGE-m3
-- GTE-large
-- Nomic-embed-text-v1.5
+### 4.1 Fixed-512
 
-### Dense Retrieval (API)
-- OpenAI text-embedding-3-large
-- Cohere Embed v3 English
-- Voyage-large-2-instruct
+- Unit: whitespace-delimited words, not model-tokenizer tokens
+- Maximum window: 512 words
+- Overlap: 50 words
+- Chunk ID: derived from parent document ID and starting word offset
 
-### Hybrid
-- BM25 + E5-large (RRF fusion)
-- BM25 + Cohere (RRF fusion)
+### 4.2 Sentence
 
----
+- Sentence segmentation: NLTK
+- Window: three consecutive sentences
+- Overlap: none
 
-## 5. Experimental Design
+The label `sentence` is retained for result compatibility, but it represents three-sentence windows rather than one sentence per chunk.
 
-### 5.1 Baseline Experiment: BEIR Replication
+### 4.3 Recursive
 
-**Purpose**: Validate evaluation infrastructure and establish the BEIR baseline that we will show is insufficient.
+1. Split documents on blank-line paragraph boundaries.
+2. Keep paragraphs of at most 512 whitespace-delimited words intact.
+3. Split longer paragraphs into NLTK sentences.
 
-**Protocol**:
-1. Index all BEIR 18 datasets using each retrieval system
-2. Run standard NDCG@10 evaluation
-3. Verify numbers match published results within ±0.5 NDCG points for open-source systems
-4. Publish baseline numbers as the "BEIR table" in the paper
+This is a lightweight paragraph-then-sentence policy, not a general recursive-character splitter. A single sentence longer than the nominal maximum is not subdivided further in the historical runner.
 
-**Expected results**: All systems reproduce published BEIR numbers within tolerance. BM25 ≈ 0.43, E5-large ≈ 0.54, BGE-m3 ≈ 0.57, Cohere ≈ 0.56 (average across all BEIR domains).
+### 4.4 Semantic
 
-**Why this matters for the paper**: We need this table to establish that our evaluation infrastructure is correct before making novel claims.
+1. Segment documents into sentences with NLTK.
+2. Embed every sentence with OpenAI `text-embedding-3-small`.
+3. L2-normalize sentence embeddings.
+4. Greedily merge adjacent sentences when cosine similarity is at least 0.75.
 
----
+Semantic boundaries are computed once with the OpenAI model and reused for all downstream dense retrievers. This controls the chunk boundaries across embedders but may align the segmentation with the model that generated them.
 
-### 5.2 Experiment 1: Chunking Sensitivity Analysis
+## 5. Retrieval Systems
 
-**Hypothesis**: Chunking strategy is a higher-variance factor than embedding model choice for long-document-heavy domains.
+### 5.1 Sparse reference
 
-**Protocol**:
-1. For each of the 12 RetrievalBench domains and 4 chunking variants, index the corpus
-2. Evaluate all 11 retrieval systems on all 48 domain×chunking conditions
-3. For each retrieval system, compute the **Chunking Sensitivity Index (CSI)**: CSI = (max NDCG across chunking variants - min NDCG across chunking variants) / mean NDCG across chunking variants
-4. For each domain, compute the **Embedding Sensitivity Index (ESI)**: ESI = std(NDCG across systems) / mean(NDCG across systems)
-5. Test hypothesis: CSI > ESI for domains with avg doc length > 500 tokens
+BM25 is run over chunk text using lowercased whitespace tokenization.
 
-**Expected results**:
-- CSI > ESI for 8/12 domains (domains with long documents)
-- Structure-aware chunking outperforms fixed 512-token chunking by 10-18 NDCG points for legal and financial domains
-- Sentence-level chunking hurts dense retrieval but helps BM25 (different granularity optima)
-- The optimal chunking strategy varies by retrieval system type (sparse vs. dense) *and* by domain
+### 5.2 Dense embedders
 
-**Novel contribution**: First empirical demonstration that the chunking-retrieval interaction effect is larger than the embedding model effect for enterprise document types. This reframes the practitioner's decision hierarchy: choose chunking strategy before choosing embedding model.
+| Result label | Model | Dimensions | Prefix behavior |
+|---|---|---:|---|
+| `openai` | `text-embedding-3-small` | 1,536 | no explicit prefix |
+| `bge-small` | `BAAI/bge-small-en-v1.5` | 384 | BGE retrieval instruction for queries |
+| `e5-small` | `intfloat/e5-small-v2` | 384 | `query:` / `passage:` prefixes |
 
----
+Embeddings are converted to float32, L2-normalized, and scored by inner product.
 
-### 5.3 Experiment 2: Latency-Adjusted NDCG (LA-NDCG)
+### 5.3 Chunk-to-document aggregation
 
-**Metric definition**:
+For each query:
 
-```
-LA-NDCG(system, budget_ms) = NDCG@10(system) × min(budget_ms / P95_latency(system), 1.0)
-```
+1. Retrieve the top 50 chunks.
+2. Map each chunk to its parent document.
+3. Assign each document the maximum score among its retrieved chunks.
+4. Sort documents by the max-pooled score.
+5. Evaluate the top 10 unique documents.
 
-Where `P95_latency` is the 95th percentile query latency measured on a standard benchmark machine (we use a c5.2xlarge AWS instance, 8 vCPU, no GPU, to simulate cost-conscious production deployments).
+Document-level qrels are used for evaluation. The parent mapping establishes that a retrieved chunk belongs to a relevant document; it does not establish that every chunk from that document contains the judged evidence.
 
-**Protocol**:
-1. For each system, run 1,000 queries and measure P50, P95, P99 latency
-2. Compute LA-NDCG at latency budgets: {50ms, 100ms, 200ms, 500ms, 1000ms}
-3. Rank systems by LA-NDCG at each budget
-4. Compare to BEIR ranking (Kendall's τ between BEIR rank and LA-NDCG rank at each budget)
+## 6. Metrics
 
-**Expected results**:
-- At 100ms budget: BM25 and SPLADE rank higher than dense API models (API embedding latency exceeds 100ms)
-- At 500ms budget: Rankings converge toward BEIR rankings but don't fully match
-- Kendall's τ between BEIR rank and LA-NDCG rank at 100ms ≈ 0.3 (weak correlation — ranking significantly reshuffled)
-- Kendall's τ at 1000ms ≈ 0.75 (strong correlation — enough time for all systems)
+### 6.1 Primary and secondary metrics
 
-**Novel contribution**: LA-NDCG as a principled, parameterized metric that practitioners can set to their actual SLA budget. The first retrieval metric that directly encodes deployment constraints.
+- Primary: NDCG@10
+- Secondary: Recall@10, MRR, MAP
+- Uncertainty: 95% bootstrap confidence interval over per-query NDCG, using 1,000 seeded resamples
+- Available paired analyses: permutation test and Cohen's d when aligned per-query values are retained
 
----
+### 6.2 Chunking and Embedding Sensitivity Indices
 
-### 5.4 Experiment 3: Cost-Quality Pareto Frontier
+For a fixed domain, define:
 
-**Protocol**:
-1. For API-based systems, record vendor-published pricing ($/1M tokens as of submission date)
-2. Compute cost per 1M queries = (avg tokens per query × $/1M tokens)
-3. Plot cost vs. NDCG@10 for all systems on a 2D Pareto chart
-4. Identify the Pareto-dominant systems at each cost tier: {<$0.01/1M queries, $0.01–$0.10, $0.10–$1.00, >$1.00}
-5. For open-source systems: compute cost as (GPU instance cost × inference time)
-
-**Expected results**:
-- BM25 is Pareto-dominant at the lowest cost tier
-- Nomic-embed (open-source, self-hosted) achieves near-API quality at 5-10x lower cost at scale
-- Cohere and Voyage are Pareto-dominant among API-only options (higher quality than OpenAI at same or lower price)
-- No single system is Pareto-dominant across all conditions — the tradeoff is real and practitioners must choose based on their constraints
-
----
-
-### 5.5 Experiment 4: Context-Window Saturation
-
-**Protocol**:
-1. For each domain, run E2E RAG evaluation: retrieve top-k passages → generate answers with GPT-4o (4k, 8k, 32k, 128k context) → score answers against gold
-2. Vary k ∈ {1, 3, 5, 10, 20, 50}
-3. Measure: answer quality (ROUGE-L, BERTScore, exact match) as a function of k and context window size
-4. Identify the **effective recall depth**: the value of k beyond which answer quality stops improving (or starts declining)
-
-**Expected results**:
-- Effective recall depth = 5-10 for 4k context models (additional passages beyond rank 10 are truncated or dilute attention)
-- Effective recall depth = 20-30 for 32k context models
-- For long-document domains, effective recall depth is *lower* because retrieved passages are longer and fill the context window faster
-- **Key finding**: NDCG@100 is a poor proxy for RAG quality; NDCG@5 and NDCG@10 at the correct granularity are more predictive
-
----
-
-## 6. Expected Results and Claims
-
-### Primary Claims (Main Paper)
-1. **Claim 1**: BEIR system rankings have Kendall's τ ≤ 0.4 with LA-NDCG rankings at 100ms latency budget — the systems BEIR recommends are not the systems production deployments should use.
-2. **Claim 2**: Chunking strategy explains more NDCG variance than embedding model choice for documents longer than 500 tokens (CSI > ESI for 8/12 domains).
-3. **Claim 3**: Structure-aware chunking outperforms best fixed-size chunking by 10-18 NDCG points on legal and financial documents.
-4. **Claim 4**: The cost-quality Pareto frontier has a clear elbow: self-hosted open-source models at GPU cost achieve >95% of best API quality at <20% of API cost at scale.
-
-### Secondary Claims (Appendix / Extended Version)
-- Effective recall depth correlates strongly with context window size (r > 0.85)
-- For negative queries (answer not in corpus), all systems have false positive rates of 15-35% (retrieving irrelevant passages with high confidence)
-- Domain-specific chunkers reduce false positive rate by 8-12% vs. general-purpose chunkers
-
----
-
-## 7. Why This Matters / Why People Would Care
-
-### Immediate Practitioner Impact
-Every organization deploying RAG in 2025-2026 faces the question: "Which retrieval system should I use?" BEIR gives them an answer that optimizes the wrong thing. RetrievalBench gives them an answer tuned to their actual deployment constraints (latency budget, cost budget, document type).
-
-### Research Community Impact
-- LA-NDCG will be adopted by future retrieval papers that target production deployment
-- The chunking-retrieval interaction effect is a genuinely surprising finding that will motivate new work on adaptive chunking and retrieval-aware document preprocessing
-- The cost-quality frontier provides a reference for efficiency-focused retrieval research
-
-### Industry Impact
-- Embedding model vendors (Cohere, Voyage, OpenAI) will integrate RetrievalBench as a third-party evaluation to differentiate on production-relevant dimensions
-- RAG framework vendors (LlamaIndex, LangChain) will use the chunking findings to improve default configurations
-
-### Longer-Term Impact
-- Establishes the paradigm shift: retrieval evaluation must include deployment constraints, not just academic metrics
-- BEIR has 2,000+ citations since 2021; a paper that significantly advances BEIR's methodology is positioned for similar long-term impact
-
----
-
-## 8. Implementation Plan
-
-### Codebase Structure
-```
-retrievalbench/
-├── data/                    # Dataset construction scripts
-│   ├── chunking/            # 4 chunking strategy implementations
-│   ├── domains/             # Domain-specific corpus processors
-│   └── queries/             # Query construction and annotation
-├── systems/                 # Retrieval system adapters
-│   ├── sparse/              # BM25, SPLADE
-│   ├── dense/               # E5, BGE, GTE, Nomic
-│   └── api/                 # Cohere, Voyage, OpenAI
-├── eval/                    # Evaluation metrics
-│   ├── ndcg.py              # Standard NDCG
-│   ├── la_ndcg.py           # Latency-Adjusted NDCG (novel)
-│   ├── cost_quality.py      # Cost-quality Pareto analysis
-│   └── context_sat.py       # Context saturation analysis
-├── latency/                 # Latency benchmarking harness
-└── leaderboard/             # Leaderboard website code
+```text
+M[c, e] = NDCG@10 for dense retrieval with chunker c and embedder e
 ```
 
-### Reproducibility Commitment
-- All code open-sourced on GitHub under Apache 2.0
-- All datasets on HuggingFace under CC-BY 4.0
-- Docker container reproducing all paper results
-- Leaderboard hosted at `retrievalbench.anote.ai` accepting community submissions
+Then:
 
----
+```text
+CSI = mean over embedders of variance across chunkers / variance of all cells
+ESI = mean over chunkers of variance across embedders / variance of all cells
+```
 
-## 9. Timeline
+CSI > ESI indicates that, within the declared candidate pool, changing chunkers moves effectiveness more than changing embedders on average.
 
-| Month | Milestone | Owner |
-|---|---|---|
-| 1 | Domain corpus collection and preprocessing | Data team |
-| 1 | Chunking strategy implementation (4 variants × 12 domains) | Engineering |
-| 2 | Query construction and relevance judgment collection | Research + annotation |
-| 2 | Retrieval system adapters (all 11 systems) | Engineering |
-| 3 | Baseline BEIR replication experiment | Research |
-| 3 | Latency benchmarking infrastructure | Engineering |
-| 4 | Chunking sensitivity + LA-NDCG experiments | Research |
-| 4 | Cost-quality frontier analysis | Research |
-| 5 | Context saturation experiment | Research |
-| 5 | Paper writing (first full draft) | All |
-| 6 | Internal mock review + revision | All |
-| 6 | Submit to SIGIR 2027 (deadline ~January 2027) | Lead author |
+CSI and ESI are not a complete orthogonal ANOVA and are not required to sum to one. Interactions and the use of conditional variances can produce a sum above or below one. They should be reported with the evaluated candidate set.
 
----
+## 7. Result Artifacts
 
-## 10. Open Questions and Risks
+### 7.1 Aggregate schema
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| API pricing changes before paper submission | Medium | Record prices at time of experiment; note in paper that pricing is time-sensitive |
-| BEIR rankings don't actually change under production conditions | Low | Pre-registration of hypothesis; if rankings are stable, that's also a finding |
-| Structure-aware chunker quality varies by domain | Medium | Human evaluation of chunking quality; ablation with and without domain-specific chunker |
-| Latency measurements are hardware-dependent | High | Standardize on AWS c5.2xlarge; provide normalization formula; report raw latency numbers |
+Core artifacts are stored at:
 
----
+```text
+results/<dataset>/chunking_results.json
+```
 
-## 11. Related Issues
+Historical matrix records commonly contain:
 
-- GitHub issue #20: Design doc
-- GitHub issues labeled `conference-prep`: conference targeting, reproducibility, ethics, mock review
-- GitHub issue #15: Reproducibility & artifact release
-- GitHub issue #16: Statistical rigor
-- GitHub issue #17: Ethics & broader impact
-- GitHub issue #18: Related work & novelty audit
-- GitHub issue #19: Internal mock peer review
+```text
+domain
+dataset
+chunking
+system
+embedder
+ndcg@10
+ndcg@10_ci_lower
+ndcg@10_ci_upper
+recall@10
+mrr
+map
+n_queries
+latency_ms
+embed_tokens           # present for applicable OpenAI dense rows
+embed_cost_usd         # present for applicable OpenAI dense rows
+```
+
+Per-domain metadata contains the realized document/query counts and aggregate OpenAI token usage.
+
+CSI/ESI output is stored in:
+
+```text
+results/csi_esi_summary.json
+```
+
+### 7.2 Artifact limitations
+
+Complete per-query ranked-list sidecars were not retained for every historical run. `ranked_lists.json` exists only for a subset of experiments. Therefore:
+
+- aggregate matrix values are released for all twelve domains;
+- CSI/ESI can be recomputed from aggregate values;
+- not every confidence interval or paired comparison can be reconstructed from released ranked lists alone.
+
+Earlier exploratory runs are retained under `results/_fullcorpus_archive/`. They use heterogeneous schemas and experimental paths and must not be silently mixed with the core matrix.
+
+## 8. Code Architecture and Provenance
+
+### 8.1 Historical matrix runner
+
+`scripts/run_chunking_pipeline.py` generated the reported 12-domain matrix. It contains the exact historical implementations of:
+
+- dataset loading and sampling
+- four matrix chunkers
+- BGE/E5 prefix handling
+- BM25 and dense retrieval
+- metric aggregation
+- token metering
+
+This script remains the provenance implementation for the paper results.
+
+### 8.2 Modular pipeline
+
+`src/retrievalbench/pipeline/` is a newer configuration-driven implementation with separate loaders, chunkers, embedders, retrievers, rerankers, metrics, and result writers.
+
+The modular path is the preferred direction for future development, but it must pass a cell-by-cell regression comparison before replacing the historical runner as the reproduction path. Known protocol differences include default chunker selection, embedder prefix handling, result schemas, and ranked-list persistence.
+
+### 8.3 Synthetic utilities
+
+The top-level `core.py`, `data.py`, `scheduling.py`, `cost.py`, and `scripts/run_demo.py` implement an earlier synthetic benchmark and systems simulation. They remain useful for unit tests and examples but do not generate the paper's main matrix.
+
+## 9. Reproduction
+
+Example matrix run:
+
+```bash
+RB_MAX_CORPUS=2000 RB_MAX_QUERIES=500 \
+python3 scripts/run_chunking_pipeline.py \
+  --dataset fiqa \
+  --embedders openai bge-small e5-small
+```
+
+Recompute CSI/ESI:
+
+```bash
+python3 scripts/analyze_csi_esi_matrix.py
+```
+
+Run tests:
+
+```bash
+python3 -m pytest -q
+```
+
+Network access, dataset downloads, model downloads, and an OpenAI API key are required only for configurations that use them. Recomputing CSI/ESI from released JSON artifacts does not require model or API access.
+
+## 10. Interpretation Rules
+
+The following claims are supported by the completed study:
+
+- chunking can materially change retrieval effectiveness;
+- the best chunker varies by domain and system;
+- chunking versus embedding sensitivity is domain-dependent;
+- the 47.1% maximum observed relative swing and 5/12 CSI result describe this matrix.
+
+The following claims must not be made from the current evidence without new experiments:
+
+- BEIR rankings are generally poor predictors of production RAG rankings;
+- latency-adjusted rankings universally reorder systems;
+- the archived dense latency values represent end-to-end online latency;
+- structure-aware chunking improves legal or financial retrieval by a stated margin;
+- retrieval rank position predicts downstream long-context generation quality;
+- one model or chunker is universally optimal;
+- metered OpenAI spend equals total deployment cost.
+
+## 11. Known Limitations and Future Work
+
+### Current limitations
+
+1. One seeded sample per domain.
+2. Document-level rather than chunk-level relevance judgments.
+3. A mixed-capacity embedder pool.
+4. One concrete parameterization per chunker family.
+5. Semantic boundaries generated by one of the evaluated model providers.
+6. Incomplete per-query artifacts for historical runs.
+7. Two experiment implementations that have not yet been proven numerically equivalent.
+
+### High-value future work
+
+1. Add two or more corpus/query sampling seeds for representative domains.
+2. Annotate chunk-level evidence on a targeted subset.
+3. Repeat CSI/ESI with a same-capacity embedder pool.
+4. Add chunk-size, overlap, and semantic-threshold sweeps.
+5. Create an end-to-end, per-query latency harness with explicit online boundaries and p50/p95/p99 reporting.
+6. Validate task-appropriate rerankers with finite-score and degeneracy diagnostics.
+7. Run structure-aware chunkers as a separate, pre-registered extension rather than mixing them into the existing matrix.
+8. Complete a regression suite that compares the modular pipeline with historical matrix cells.
+
+## 12. Project Outputs
+
+- Paper: `paper/main.tex` and `paper/main.pdf`
+- Research blog: `blog/retrievalbench.md`
+- Blog figures: `blog/images/`
+- Core aggregate results: `results/<dataset>/chunking_results.json`
+- CSI/ESI summary: `results/csi_esi_summary.json`
+
+These outputs should remain aligned. Any future change to the reported matrix protocol must update the runner, result metadata, paper, blog, README, and this design specification together.
